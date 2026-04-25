@@ -10,13 +10,16 @@ import { ScrivenerProject } from './scrivener.js';
 
 const SCRIV_DIR = process.env.SCRIV_DIR ?? null;
 const SCRIV_PATH = process.env.SCRIV_PATH ?? null;
+const SCRIV_PLATFORM = (['mac', 'windows'].includes(process.env.SCRIV_PLATFORM))
+  ? process.env.SCRIV_PLATFORM
+  : 'mac';
 
 if (!SCRIV_DIR && !SCRIV_PATH) {
   console.error('Error: SCRIV_DIR or SCRIV_PATH environment variable is required');
   process.exit(1);
 }
 
-let currentProject = SCRIV_PATH ? new ScrivenerProject(SCRIV_PATH) : null;
+let currentProject = SCRIV_PATH ? new ScrivenerProject(SCRIV_PATH, { platform: SCRIV_PLATFORM }) : null;
 
 function requireProject() {
   if (!currentProject) {
@@ -235,7 +238,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const dir = requireDir();
         const { name: projectName } = args;
         const packageName = projectName.endsWith('.scriv') ? projectName : `${projectName}.scriv`;
-        currentProject = new ScrivenerProject(join(dir, packageName));
+        currentProject = new ScrivenerProject(join(dir, packageName), { platform: SCRIV_PLATFORM });
         return { content: [{ type: 'text', text: `Opened project: ${projectName}` }] };
       }
 
@@ -243,6 +246,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const dir = requireDir();
         const { name: projectName, labels, statuses, manuscript, research } = args;
         currentProject = ScrivenerProject.create(dir, projectName, {
+          platform: SCRIV_PLATFORM,
           labels: labels ?? [],
           statuses,
           manuscript: manuscript ?? [],

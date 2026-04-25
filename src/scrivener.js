@@ -46,9 +46,38 @@ const LABEL_COLORS_NAMED = {
 
 const LABEL_COLORS = Object.values(LABEL_COLORS_NAMED);
 
+function buildRtf(plainText, platform = 'mac') {
+  const escaped = plainText
+    .replace(/\\/g, '\\\\')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}')
+    .replace(/[^\x00-\x7F]/g, (ch) => `\\uc1\\u${ch.charCodeAt(0)}?`)
+    .replace(/\r?\n/g, '\\par\n');
+
+  if (platform === 'windows') {
+    return [
+      '{\\rtf1\\ansi\\ansicpg1252\\deff0',
+      '{\\fonttbl{\\f0\\fswiss\\fcharset0 Arial;}}',
+      '\\f0\\fs24 ' + escaped,
+      '}',
+    ].join('\r\n');
+  }
+
+  return [
+    '{\\rtf1\\ansi\\ansicpg1252\\cocoartf2761',
+    '{\\fonttbl\\f0\\fswiss\\fcharset0 Helvetica;}',
+    '{\\colortbl;\\red255\\green255\\blue255;}',
+    '\\paperw11900\\paperh16840\\margl1440\\margr1440\\vieww11520\\viewh8400\\viewkind0',
+    '\\pard\\tx566\\tx1133\\tx1700\\tx2267\\tx2834\\tx3401\\tx3968\\tx4535\\tx5102\\tx5669\\tx6236\\tx6803\\pardirnatural\\partightenfactor0',
+    '\\f0\\fs24 \\cf0 ' + escaped,
+    '}',
+  ].join('\n');
+}
+
 export class ScrivenerProject {
-  constructor(scrivPath) {
+  constructor(scrivPath, { platform = 'mac' } = {}) {
     this.scrivPath = scrivPath;
+    this.platform = platform;
     this.scrivxPath = this._findScrivxFile();
     this._load();
   }
@@ -144,25 +173,7 @@ export class ScrivenerProject {
   writeContent(uuid, plainText) {
     const dir = join(this.scrivPath, 'Files', 'Data', uuid);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-    const escaped = plainText
-      .replace(/\\/g, '\\\\')
-      .replace(/\{/g, '\\{')
-      .replace(/\}/g, '\\}')
-      .replace(/[^\x00-\x7F]/g, (ch) => `\\uc1\\u${ch.charCodeAt(0)}?`)
-      .replace(/\r?\n/g, '\\par\n');
-
-    const rtf = [
-      '{\\rtf1\\ansi\\ansicpg1252\\cocoartf2761',
-      '{\\fonttbl\\f0\\fswiss\\fcharset0 Helvetica;}',
-      '{\\colortbl;\\red255\\green255\\blue255;}',
-      '\\paperw11900\\paperh16840\\margl1440\\margr1440\\vieww11520\\viewh8400\\viewkind0',
-      '\\pard\\tx566\\tx1133\\tx1700\\tx2267\\tx2834\\tx3401\\tx3968\\tx4535\\tx5102\\tx5669\\tx6236\\tx6803\\pardirnatural\\partightenfactor0',
-      '\\f0\\fs24 \\cf0 ' + escaped,
-      '}',
-    ].join('\n');
-
-    writeFileSync(join(dir, 'content.rtf'), rtf, 'utf8');
+    writeFileSync(join(dir, 'content.rtf'), buildRtf(plainText, this.platform), 'utf8');
   }
 
   updateMetadata(uuid, changes) {
@@ -184,6 +195,7 @@ export class ScrivenerProject {
 
   static create(projectsDir, name, options = {}) {
     const {
+      platform = 'mac',
       labels = [],
       statuses = ['To Do', 'In Progress', 'First Draft', 'Revised Draft', 'Done'],
       manuscript = [],
@@ -295,7 +307,7 @@ export class ScrivenerProject {
       new XMLBuilder(BUILDER_OPTIONS).build(doc);
     writeFileSync(join(scrivPath, `${safeName}.scrivx`), xml, 'utf8');
 
-    const project = new ScrivenerProject(scrivPath);
+    const project = new ScrivenerProject(scrivPath, { platform });
     for (const { uuid, content } of pendingContent) {
       project.writeContent(uuid, content);
     }
