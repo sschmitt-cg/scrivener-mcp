@@ -26,8 +26,9 @@ npm install
 |---|---|
 | `SCRIV_DIR` | Path to a directory containing `.scriv` packages. Enables `list_projects`, `open_project`, and `create_project`. |
 | `SCRIV_PATH` | Path to a single `.scriv` package. Opens it immediately on startup. |
+| `SCRIV_PLATFORM` | `mac` (default) or `windows`. Controls the RTF format used when writing document content. |
 
-At least one must be set. Both can be set simultaneously.
+At least one of `SCRIV_DIR` or `SCRIV_PATH` must be set. Both can be set simultaneously.
 
 ---
 
@@ -45,8 +46,11 @@ SCRIV_PATH="/path/to/MyProject.scriv" npm start
 
 ## Configuring Claude Desktop
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Edit the Claude Desktop config file:
+- **Mac:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
+**Mac:**
 ```json
 {
   "mcpServers": {
@@ -55,6 +59,22 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "args": ["/absolute/path/to/scrivener-mcp/src/index.js"],
       "env": {
         "SCRIV_DIR": "/Users/you/Writing/ScrivenerProjects"
+      }
+    }
+  }
+}
+```
+
+**Windows:**
+```json
+{
+  "mcpServers": {
+    "scrivener": {
+      "command": "node",
+      "args": ["C:\\path\\to\\scrivener-mcp\\src\\index.js"],
+      "env": {
+        "SCRIV_DIR": "C:\\Users\\you\\Documents\\ScrivenerProjects",
+        "SCRIV_PLATFORM": "windows"
       }
     }
   }
