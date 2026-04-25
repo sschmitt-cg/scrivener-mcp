@@ -99,9 +99,12 @@ Restart Claude Desktop after saving.
 
 | Tool | Description |
 |---|---|
-| `list_documents` | Returns the full flattened binder with label and status names resolved. |
+| `get_outline` | Returns the full binder as a nested tree with synopses, labels, and statuses. The best starting point for understanding and working on a project's structure. |
+| `list_documents` | Returns the binder as a flat list with depth indicators. Useful for getting UUIDs. |
 | `get_document(uuid)` | Returns metadata and plain text content for a single document. |
-| `write_document(uuid, content)` | Writes new plain text content (stored as RTF). |
+| `add_document(...)` | Adds a new document or folder to the binder. |
+| `move_document(uuid, newParentUuid)` | Moves a binder item to a different parent folder. |
+| `write_document(uuid, content)` | Writes new plain text content to a document (stored as RTF). |
 | `update_metadata(uuid, changes)` | Updates title, synopsis, label, status, or compile inclusion. |
 | `search_documents(query)` | Searches titles and synopses across the binder. |
 
@@ -191,9 +194,19 @@ Restart Claude Desktop after saving.
 
 ---
 
+## Collaborative workflow
+
+The intended pattern is to work with Claude on the structure and content of a project together, using Scrivener's own organisational features:
+
+1. **Start with `get_outline`** — Claude reads the full nested structure with synopses before suggesting or making any changes. This is how it understands the story shape.
+2. **Build structure with `add_document`** — Add scenes, chapters, acts, or research notes at any point in the hierarchy. Always include a synopsis; it is what appears on the index card in Scrivener's corkboard.
+3. **Reorganise with `move_document`** — Move items between parents to restructure the narrative without losing any content or metadata.
+4. **Write prose with `write_document`** — Once structure is agreed, populate scenes with content.
+5. **Track progress with `update_metadata`** — Update labels (e.g. POV, scene type) and statuses (e.g. First Draft, Revised) as work progresses.
+
 ## Notes
 
-- **Close Scrivener before writing.** `write_document` and `update_metadata` modify files directly. If Scrivener has the project open, it will overwrite changes on its next auto-save.
+- **Close Scrivener before writing.** `write_document`, `update_metadata`, `add_document`, and `move_document` all modify project files directly. If Scrivener has the project open, it will overwrite changes on its next auto-save.
 - **Reload after editing in Scrivener.** Call `open_project` again to reload a project that was modified in Scrivener while the server was running.
-- `write_document` generates minimal RTF compatible with Scrivener 3 (cocoartf2761). Non-ASCII characters are Unicode-escaped.
+- `write_document` generates minimal RTF compatible with Scrivener 3. Non-ASCII characters are Unicode-escaped.
 - Label and status IDs are discoverable via `list_documents` — `labelId`/`statusId` are raw IDs, `label`/`status` are the resolved names.

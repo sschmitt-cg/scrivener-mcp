@@ -206,6 +206,66 @@ Use this to scaffold a writing project from an idea: define the manuscript struc
       required: ['query'],
     },
   },
+  {
+    name: 'get_outline',
+    description: `Returns the full binder as a nested tree with synopses, labels, and statuses — the single best tool for understanding a project's structure before suggesting or making changes.
+
+Each node in the tree corresponds to a Scrivener index card. The synopsis is what appears on that card in the corkboard. Use this to see the story shape at a glance: which acts exist, how chapters are distributed, which scenes have synopses and which are blank, where structural gaps or imbalances are, and how labels and statuses are distributed across the manuscript.
+
+Call this before adding, moving, or proposing structural changes.`,
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'add_document',
+    description: `Adds a new document or folder to the binder of the active project. WARNING: Scrivener must be closed — changes will be overwritten by Scrivener's auto-save if the project is open.
+
+Use this to extend the structure of an existing project: add a new scene to a chapter, a new chapter to an act, a new research note, or a whole new folder. Always populate synopsis — it is the index card text that makes the corkboard and outliner useful for structural reasoning.
+
+If parentUuid is omitted, the item is appended to the top level of the Manuscript folder. Returns the new item's UUID.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        parentUuid: {
+          type: 'string',
+          description: "UUID of the parent folder. Omit to append to the Manuscript folder's top level.",
+        },
+        title: { type: 'string' },
+        type: {
+          type: 'string',
+          enum: ['Text', 'Folder'],
+          description: 'Folder for containers (chapters, acts, parts); Text for documents (scenes, notes). Defaults to Text.',
+        },
+        synopsis: {
+          type: 'string',
+          description: "Index card text — shown in Scrivener's corkboard and outliner. Always populate this.",
+        },
+        content: { type: 'string', description: 'Initial plain-text body (Text items only).' },
+        label: { type: 'string', description: 'Label name — must match a label defined in the project.' },
+        status: { type: 'string', description: 'Status name — must match a status defined in the project.' },
+        includeInCompile: { type: 'boolean', description: 'Whether to include in compile. Defaults to true.' },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'move_document',
+    description: `Moves a binder item to a different parent folder. WARNING: Scrivener must be closed — changes will be overwritten by Scrivener's auto-save if the project is open.
+
+Use this to restructure the project: move a scene from one chapter to another, promote a scene to chapter level, reorganise acts, or move a document into the Research folder. The item retains all its content and metadata; only its position in the hierarchy changes.
+
+If newParentUuid is omitted, the item is moved to the top level of the Manuscript folder. Call get_outline first to understand the current structure before reorganising.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uuid: { type: 'string', description: 'UUID of the item to move.' },
+        newParentUuid: {
+          type: 'string',
+          description: 'UUID of the destination folder. Omit to move to the top level of the Manuscript folder.',
+        },
+      },
+      required: ['uuid'],
+    },
+  },
 ];
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -330,6 +390,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               item.synopsis.toLowerCase().includes(lower)
           );
         return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+      }
+
+      case 'get_outline': {
+        const project = requireProject();
+        return { content: [{ type: 'text', text: JSON.stringify(project.getOutline(), null, 2) }] };
+      }
+
+      case 'add_document': {
+        const project = requireProject();
+        const { parentUuid, title, type, synopsis, content, label, status, includeInCompile } = args;
+        const uuid = project.addItem(parentUuid ?? null, {
+          title, type, synopsis, content, label, status, includeInCompile,
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `Added "${title}" with UUID ${uuid}.\n\nReminder: if Scrivener has this project open, it will overwrite this change on its next auto-save. Close Scrivener before adding documents.`,
+          }],
+        };
+      }
+
+      case 'move_document': {
+        const project = requireProject();
+        const { uuid, newParentUuid } = args;
+        project.moveItem(uuid, newParentUuid ?? null);
+        return {
+          content: [{
+            type: 'text',
+            text: `Moved ${uuid}.\n\nReminder: if Scrivener has this project open, it will overwrite this change on its next auto-save. Close Scrivener before moving documents.`,
+          }],
+        };
       }
 
       default:

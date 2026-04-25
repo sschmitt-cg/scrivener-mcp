@@ -191,6 +191,111 @@ export class ScrivenerProject {
     this._save();
   }
 
+  // ── Binder mutation ─────────────────────────────────────────────────────────
+
+  _getNextId() {
+    const max = this.flattenBinder().reduce((m, i) => Math.max(m, parseInt(i.id) || 0), 0);
+    return String(max + 1);
+  }
+
+  _findWithParent(items, uuid) {
+    for (let i = 0; i < items.length; i++) {
+      if ((items[i]['@_UUID'] ?? '') === uuid) return { item: items[i], siblings: items, index: i };
+      const children = items[i].Children?.BinderItem;
+      if (children?.length) {
+        const found = this._findWithParent(children, uuid);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  _targetChildren(parentUuid) {
+    if (parentUuid) {
+      const parent = this.findItem(parentUuid);
+      if (!parent) throw new Error(`Parent not found: ${parentUuid}`);
+      if (!parent.Children) parent.Children = {};
+      if (!parent.Children.BinderItem) parent.Children.BinderItem = [];
+      return parent.Children.BinderItem;
+    }
+    const draft = this._getBinderItems().find((i) => i['@_Type'] === 'DraftFolder');
+    if (!draft) throw new Error('No Manuscript folder found');
+    if (!draft.Children) draft.Children = {};
+    if (!draft.Children.BinderItem) draft.Children.BinderItem = [];
+    return draft.Children.BinderItem;
+  }
+
+  addItem(parentUuid, itemDef) {
+    const labels = this.getLabels();
+    const statuses = this.getStatuses();
+    const labelId = itemDef.label
+      ? Object.entries(labels).find(([, n]) => n === itemDef.label)?.[0]
+      : undefined;
+    const statusId = itemDef.status
+      ? Object.entries(statuses).find(([, n]) => n === itemDef.status)?.[0]
+      : undefined;
+
+    const uuid = randomUUID().toUpperCase();
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+    const node = {
+      '@_UUID': uuid,
+      '@_ID': this._getNextId(),
+      '@_Type': itemDef.type ?? 'Text',
+      Title: itemDef.title ?? 'Untitled',
+    };
+
+    if (itemDef.synopsis) node.Synopsis = itemDef.synopsis;
+
+    const meta = {
+      IncludeInCompile: itemDef.includeInCompile === false ? 'No' : 'Yes',
+      Created: now,
+      Modified: now,
+    };
+    if (labelId !== undefined) meta.LabelID = labelId;
+    if (statusId !== undefined) meta.StatusID = statusId;
+    node.MetaData = meta;
+
+    this._targetChildren(parentUuid).push(node);
+    this._save();
+
+    if (itemDef.content) this.writeContent(uuid, itemDef.content);
+
+    return uuid;
+  }
+
+  moveItem(uuid, newParentUuid) {
+    const found = this._findWithParent(this._getBinderItems(), uuid);
+    if (!found) throw new Error(`Item not found: ${uuid}`);
+    found.siblings.splice(found.index, 1);
+    this._targetChildren(newParentUuid ?? null).push(found.item);
+    this._save();
+  }
+
+  // ── Outline ──────────────────────────────────────────────────────────────────
+
+  _outlineItem(item, labels, statuses) {
+    const meta = item.MetaData ?? {};
+    const node = {
+      uuid: item['@_UUID'] ?? '',
+      type: item['@_Type'] ?? '',
+      title: item.Title ?? '',
+      synopsis: item.Synopsis ?? meta.Synopsis ?? '',
+      label: labels[String(meta.LabelID ?? '')] ?? '',
+      status: statuses[String(meta.StatusID ?? '')] ?? '',
+      includeInCompile: meta.IncludeInCompile ?? '',
+    };
+    const children = item.Children?.BinderItem ?? [];
+    if (children.length) node.children = children.map((c) => this._outlineItem(c, labels, statuses));
+    return node;
+  }
+
+  getOutline() {
+    const labels = this.getLabels();
+    const statuses = this.getStatuses();
+    return this._getBinderItems().map((item) => this._outlineItem(item, labels, statuses));
+  }
+
   // ── Static factory ──────────────────────────────────────────────────────────
 
   static create(projectsDir, name, options = {}) {
