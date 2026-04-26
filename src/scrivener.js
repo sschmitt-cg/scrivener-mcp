@@ -376,6 +376,7 @@ export class ScrivenerProject {
     if (existsSync(scrivPath)) throw new Error(`Project already exists: ${packageName}`);
 
     mkdirSync(join(scrivPath, 'Files', 'Data'), { recursive: true });
+    mkdirSync(join(scrivPath, 'Settings'), { recursive: true });
 
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
     let nextId = 1;
