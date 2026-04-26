@@ -196,14 +196,17 @@ export class ScrivenerProject {
     if (!item) throw new Error(`Item not found: ${uuid}`);
     if (!item.MetaData) item.MetaData = {};
 
-    if ('title' in changes) item.Title = changes.title;
     if ('synopsis' in changes) this.writeSynopsis(uuid, changes.synopsis);
-    if ('labelId' in changes) item.MetaData.LabelID = String(changes.labelId);
-    if ('statusId' in changes) item.MetaData.StatusID = String(changes.statusId);
+
+    let xmlDirty = false;
+    if ('title' in changes) { item.Title = changes.title; xmlDirty = true; }
+    if ('labelId' in changes) { item.MetaData.LabelID = String(changes.labelId); xmlDirty = true; }
+    if ('statusId' in changes) { item.MetaData.StatusID = String(changes.statusId); xmlDirty = true; }
     if ('includeInCompile' in changes) {
       item.MetaData.IncludeInCompile = changes.includeInCompile ? 'Yes' : 'No';
+      xmlDirty = true;
     }
-    this._save();
+    if (xmlDirty) this._save();
   }
 
   // ── Binder mutation ─────────────────────────────────────────────────────────
