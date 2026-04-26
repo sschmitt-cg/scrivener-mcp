@@ -196,6 +196,37 @@ Use this to scaffold a writing project from an idea: define the manuscript struc
     },
   },
   {
+    name: 'batch_update_metadata',
+    description: `Batch version of update_metadata. Applies many metadata changes in a single .scrivx write, reducing the conflict window and the per-call overhead. Each entry has the same {uuid, changes} shape as update_metadata. UUIDs not found in the binder are reported in the response rather than throwing. Will fail with a clear error if Scrivener has the project open.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        updates: {
+          type: 'array',
+          description: 'List of per-document metadata updates to apply atomically.',
+          items: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string' },
+              changes: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string' },
+                  synopsis: { type: 'string' },
+                  labelId: { type: 'string' },
+                  statusId: { type: 'string' },
+                  includeInCompile: { type: 'boolean' },
+                },
+              },
+            },
+            required: ['uuid', 'changes'],
+          },
+        },
+      },
+      required: ['updates'],
+    },
+  },
+  {
     name: 'search_documents',
     description: 'Searches title and synopsis across all binder items in the active project.',
     inputSchema: {
@@ -403,6 +434,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{
             type: 'text',
             text: `Metadata updated for ${uuid}.\n\nReminder: if Scrivener has this project open, it will overwrite this change on its next auto-save. Close Scrivener before updating metadata.`,
+          }],
+        };
+      }
+
+      case 'batch_update_metadata': {
+        const project = requireProject();
+        const { updates } = args;
+        const result = project.batchUpdateMetadata(updates);
+        return {
+          content: [{
+            type: 'text',
+            text: `Batch update applied ${result.applied}/${updates.length}.` +
+              (result.errors.length ? `\nErrors:\n${JSON.stringify(result.errors, null, 2)}` : ''),
           }],
         };
       }

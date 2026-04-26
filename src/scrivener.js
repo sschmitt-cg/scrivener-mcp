@@ -151,6 +151,11 @@ const LABEL_COLORS_NAMED = {
 
 const LABEL_COLORS = Object.values(LABEL_COLORS_NAMED);
 
+function decodeUnicodeEscapes(s) {
+  if (typeof s !== 'string') return s;
+  return s.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
+
 function buildRtf(plainText, platform = 'mac') {
   const escaped = plainText
     .replace(/\\/g, '\\\\')
@@ -295,7 +300,7 @@ export class ScrivenerProject {
         'Use add_document to create a new document and obtain a valid UUID.'
       );
     }
-    this._writeContentRaw(uuid, plainText);
+    this._writeContentRaw(uuid, decodeUnicodeEscapes(plainText));
   }
 
   _writeContentRaw(uuid, plainText) {
@@ -304,21 +309,40 @@ export class ScrivenerProject {
     writeFileSync(join(dir, 'content.rtf'), buildRtf(plainText, this.platform), 'utf8');
   }
 
-  updateMetadata(uuid, changes) {
-    this._assertWritable();
-    this.reload();
-    const item = this.findItem(uuid);
-    if (!item) throw new Error(`Item not found: ${uuid}`);
+  _applyMetadataChanges(item, changes) {
     if (!item.MetaData) item.MetaData = {};
-
-    if ('title' in changes) item.Title = changes.title;
-    if ('synopsis' in changes) item.Synopsis = changes.synopsis;
+    if ('title' in changes) item.Title = decodeUnicodeEscapes(changes.title);
+    if ('synopsis' in changes) item.Synopsis = decodeUnicodeEscapes(changes.synopsis);
     if ('labelId' in changes) item.MetaData.LabelID = String(changes.labelId);
     if ('statusId' in changes) item.MetaData.StatusID = String(changes.statusId);
     if ('includeInCompile' in changes) {
       item.MetaData.IncludeInCompile = changes.includeInCompile ? 'Yes' : 'No';
     }
+  }
+
+  updateMetadata(uuid, changes) {
+    this._assertWritable();
+    this.reload();
+    const item = this.findItem(uuid);
+    if (!item) throw new Error(`Item not found: ${uuid}`);
+    this._applyMetadataChanges(item, changes);
     this._save();
+  }
+
+  batchUpdateMetadata(updates) {
+    this._assertWritable();
+    this.reload();
+    const errors = [];
+    for (const { uuid, changes } of updates) {
+      const item = this.findItem(uuid);
+      if (!item) {
+        errors.push({ uuid, error: 'not found' });
+        continue;
+      }
+      this._applyMetadataChanges(item, changes);
+    }
+    this._save();
+    return { applied: updates.length - errors.length, errors };
   }
 
   // ── Binder mutation ─────────────────────────────────────────────────────────
@@ -370,14 +394,15 @@ export class ScrivenerProject {
     const uuid = randomUUID().toUpperCase();
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
+    const type = itemDef.type ?? 'Text';
     const node = {
       '@_UUID': uuid,
       '@_ID': this._getNextId(),
-      '@_Type': itemDef.type ?? 'Text',
-      Title: itemDef.title ?? 'Untitled',
+      '@_Type': type,
+      Title: decodeUnicodeEscapes(itemDef.title ?? 'Untitled'),
     };
 
-    if (itemDef.synopsis) node.Synopsis = itemDef.synopsis;
+    if (itemDef.synopsis) node.Synopsis = decodeUnicodeEscapes(itemDef.synopsis);
 
     const meta = {
       IncludeInCompile: itemDef.includeInCompile === false ? 'No' : 'Yes',
@@ -391,7 +416,9 @@ export class ScrivenerProject {
     this._targetChildren(parentUuid).push(node);
     this._save();
 
-    if (itemDef.content) this._writeContentRaw(uuid, itemDef.content);
+    if (type === 'Text') {
+      this._writeContentRaw(uuid, decodeUnicodeEscapes(itemDef.content ?? ''));
+    }
 
     return uuid;
   }
@@ -490,14 +517,15 @@ export class ScrivenerProject {
 
     function buildItem(item) {
       const uuid = randomUUID().toUpperCase();
+      const type = item.type ?? 'Text';
       const node = {
         '@_UUID': uuid,
         '@_ID': String(nextId++),
-        '@_Type': item.type ?? 'Text',
-        Title: item.title ?? 'Untitled',
+        '@_Type': type,
+        Title: decodeUnicodeEscapes(item.title ?? 'Untitled'),
       };
 
-      if (item.synopsis) node.Synopsis = item.synopsis;
+      if (item.synopsis) node.Synopsis = decodeUnicodeEscapes(item.synopsis);
 
       const meta = {
         IncludeInCompile: item.includeInCompile === false ? 'No' : 'Yes',
@@ -511,7 +539,9 @@ export class ScrivenerProject {
       const children = item.children ?? [];
       if (children.length > 0) node.Children = { BinderItem: children.map(buildItem) };
 
-      if (item.content) pendingContent.push({ uuid, content: item.content });
+      if (type === 'Text') {
+        pendingContent.push({ uuid, content: decodeUnicodeEscapes(item.content ?? '') });
+      }
 
       return node;
     }

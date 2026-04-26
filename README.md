@@ -107,6 +107,7 @@ Restart Claude Desktop after saving.
 | `move_document(uuid, newParentUuid)` | Moves a binder item to a different parent folder. |
 | `write_document(uuid, content)` | Writes new plain text content to a document (stored as RTF). |
 | `update_metadata(uuid, changes)` | Updates title, synopsis, label, status, or compile inclusion. |
+| `batch_update_metadata(updates)` | Batch version of `update_metadata` — applies many changes in a single `.scrivx` write. |
 | `search_documents(query)` | Searches titles and synopses across the binder. |
 
 ---
