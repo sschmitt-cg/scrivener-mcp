@@ -207,7 +207,7 @@ The intended pattern is to work with Claude on the structure and content of a pr
 
 ## Notes
 
-- **Close Scrivener before writing.** `write_document`, `update_metadata`, `add_document`, and `move_document` all modify project files directly. If Scrivener has the project open, it will overwrite changes on its next auto-save.
-- **Reload after editing in Scrivener.** Call `open_project` again to reload a project that was modified in Scrivener while the server was running.
+- **Close Scrivener before writing.** `write_document`, `update_metadata`, `add_document`, and `move_document` modify project files directly. The server detects an open Scrivener instance via the `Files/user.lock` file Scrivener creates and refuses to write while it exists, so concurrent edits won't silently corrupt the project. Close Scrivener and retry.
+- **Mutations re-read state automatically.** Each mutating call reloads the `.scrivx` from disk before writing, so external edits made between MCP calls aren't overwritten.
 - `write_document` generates minimal RTF compatible with Scrivener 3. Non-ASCII characters are Unicode-escaped.
 - Label and status IDs are discoverable via `list_documents` — `labelId`/`statusId` are raw IDs, `label`/`status` are the resolved names.

@@ -163,7 +163,7 @@ Use this to scaffold a writing project from an idea: define the manuscript struc
   },
   {
     name: 'write_document',
-    description: 'Writes new plain text content to a document. WARNING: Scrivener must be closed before calling this — if the project is open, Scrivener will overwrite these changes on its next auto-save.',
+    description: 'Writes new plain text content to an existing document. The UUID must already be in the binder (use add_document to create a new document). The call will fail with a clear error if Scrivener has the project open — close Scrivener first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -175,7 +175,7 @@ Use this to scaffold a writing project from an idea: define the manuscript struc
   },
   {
     name: 'update_metadata',
-    description: 'Updates title, synopsis, label, status, or includeInCompile for a document. WARNING: Scrivener must be closed before calling this — if the project is open, Scrivener will overwrite these changes on its next auto-save.',
+    description: 'Updates title, synopsis, label, status, or includeInCompile for a document. Will fail with a clear error if Scrivener has the project open — close Scrivener first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -246,7 +246,7 @@ Use this when you need the prose for several specific documents (e.g. the previo
   },
   {
     name: 'add_document',
-    description: `Adds a new document or folder to the binder of the active project. WARNING: Scrivener must be closed — changes will be overwritten by Scrivener's auto-save if the project is open.
+    description: `Adds a new document or folder to the binder of the active project. Will fail with a clear error if Scrivener has the project open — close Scrivener first.
 
 Use this to extend the structure of an existing project: add a new scene to a chapter, a new chapter to an act, a new research note, or a whole new folder. Always populate synopsis — it is the index card text that makes the corkboard and outliner useful for structural reasoning.
 
@@ -278,7 +278,7 @@ If parentUuid is omitted, the item is appended to the top level of the Manuscrip
   },
   {
     name: 'move_document',
-    description: `Moves a binder item to a different parent folder. WARNING: Scrivener must be closed — changes will be overwritten by Scrivener's auto-save if the project is open.
+    description: `Moves a binder item to a different parent folder. Will fail with a clear error if Scrivener has the project open — close Scrivener first.
 
 Use this to restructure the project: move a scene from one chapter to another, promote a scene to chapter level, reorganise acts, or move a document into the Research folder. The item retains all its content and metadata; only its position in the hierarchy changes.
 

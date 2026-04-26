@@ -203,6 +203,17 @@ export class ScrivenerProject {
     this._load();
   }
 
+  _assertWritable() {
+    const lockPath = join(this.scrivPath, 'Files', 'user.lock');
+    if (existsSync(lockPath)) {
+      throw new Error(
+        'Scrivener has this project open (Files/user.lock exists). ' +
+        'Close the project in Scrivener and retry. ' +
+        "If you're sure no Scrivener instance is running, delete Files/user.lock manually."
+      );
+    }
+  }
+
   _save() {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
       new XMLBuilder(BUILDER_OPTIONS).build(this._doc);
@@ -276,12 +287,26 @@ export class ScrivenerProject {
   }
 
   writeContent(uuid, plainText) {
+    this._assertWritable();
+    this.reload();
+    if (!this.findItem(uuid)) {
+      throw new Error(
+        `Cannot write content: UUID ${uuid} is not in the binder. ` +
+        'Use add_document to create a new document and obtain a valid UUID.'
+      );
+    }
+    this._writeContentRaw(uuid, plainText);
+  }
+
+  _writeContentRaw(uuid, plainText) {
     const dir = join(this.scrivPath, 'Files', 'Data', uuid);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'content.rtf'), buildRtf(plainText, this.platform), 'utf8');
   }
 
   updateMetadata(uuid, changes) {
+    this._assertWritable();
+    this.reload();
     const item = this.findItem(uuid);
     if (!item) throw new Error(`Item not found: ${uuid}`);
     if (!item.MetaData) item.MetaData = {};
@@ -331,6 +356,8 @@ export class ScrivenerProject {
   }
 
   addItem(parentUuid, itemDef) {
+    this._assertWritable();
+    this.reload();
     const labels = this.getLabels();
     const statuses = this.getStatuses();
     const labelId = itemDef.label
@@ -364,12 +391,14 @@ export class ScrivenerProject {
     this._targetChildren(parentUuid).push(node);
     this._save();
 
-    if (itemDef.content) this.writeContent(uuid, itemDef.content);
+    if (itemDef.content) this._writeContentRaw(uuid, itemDef.content);
 
     return uuid;
   }
 
   moveItem(uuid, newParentUuid) {
+    this._assertWritable();
+    this.reload();
     const found = this._findWithParent(this._getBinderItems(), uuid);
     if (!found) throw new Error(`Item not found: ${uuid}`);
     found.siblings.splice(found.index, 1);
@@ -549,7 +578,7 @@ export class ScrivenerProject {
 
     const project = new ScrivenerProject(scrivPath, { platform });
     for (const { uuid, content } of pendingContent) {
-      project.writeContent(uuid, content);
+      project._writeContentRaw(uuid, content);
     }
     return project;
   }
