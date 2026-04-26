@@ -313,11 +313,15 @@ export class ScrivenerProject {
     if (statusId !== undefined) meta.StatusID = statusId;
     node.MetaData = meta;
 
+    // Write supporting files BEFORE saving the binder XML. This ensures all
+    // data files are in place when Scrivener's FSEvents watcher fires on the
+    // .scrivx write, preventing a race where Scrivener saves without the new
+    // entry and leaves an orphaned Files/Data directory.
+    if (itemDef.synopsis) this.writeSynopsis(uuid, itemDef.synopsis, itemDef.title ?? 'Untitled');
+    if (itemDef.content) this.writeContent(uuid, itemDef.content);
+
     this._targetChildren(parentUuid).push(node);
     this._save();
-
-    if (itemDef.content) this.writeContent(uuid, itemDef.content);
-    if (itemDef.synopsis) this.writeSynopsis(uuid, itemDef.synopsis, itemDef.title ?? 'Untitled');
 
     return uuid;
   }
