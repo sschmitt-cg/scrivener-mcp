@@ -185,10 +185,51 @@ export class ScrivenerProject {
     }
   }
 
-  writeSynopsis(uuid, text) {
+  _escapeXml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Scrivener renders corkboard/outline synopses from Files/search.indexes,
+  // not by reading synopsis.txt directly on open. Keep both in sync.
+  _updateSearchIndex(uuid, title, synopsis) {
+    const indexPath = join(this.scrivPath, 'Files', 'search.indexes');
+    let content;
+    try {
+      content = readFileSync(indexPath, 'utf8');
+    } catch {
+      content = '<?xml version="1.0" encoding="UTF-8"?>\n<SearchIndexes Version="1.0">\n    <Documents>\n    </Documents>\n</SearchIndexes>\n';
+    }
+
+    const synopsisTag = `<Synopsis>${this._escapeXml(synopsis)}</Synopsis>`;
+    const docRe = new RegExp(`(        <Document ID="${uuid}">[\\s\\S]*?        </Document>)`);
+    const docMatch = content.match(docRe);
+
+    if (docMatch) {
+      let block = docMatch[1];
+      if (/<Synopsis>/.test(block)) {
+        block = block.replace(/<Synopsis>[\s\S]*?<\/Synopsis>/, synopsisTag);
+      } else {
+        block = block.replace(/(<\/Title>)/, `$1\n            ${synopsisTag}`);
+      }
+      content = content.replace(docRe, block);
+    } else {
+      const newDoc = [
+        `        <Document ID="${uuid}">`,
+        `            <Title>${this._escapeXml(title)}</Title>`,
+        `            ${synopsisTag}`,
+        `        </Document>`,
+      ].join('\n');
+      content = content.replace('    </Documents>', `${newDoc}\n    </Documents>`);
+    }
+
+    writeFileSync(indexPath, content, 'utf8');
+  }
+
+  writeSynopsis(uuid, text, title = '') {
     const dir = join(this.scrivPath, 'Files', 'Data', uuid);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'synopsis.txt'), text, 'utf8');
+    this._updateSearchIndex(uuid, title, text);
   }
 
   updateMetadata(uuid, changes) {
@@ -196,7 +237,7 @@ export class ScrivenerProject {
     if (!item) throw new Error(`Item not found: ${uuid}`);
     if (!item.MetaData) item.MetaData = {};
 
-    if ('synopsis' in changes) this.writeSynopsis(uuid, changes.synopsis);
+    if ('synopsis' in changes) this.writeSynopsis(uuid, changes.synopsis, item.Title ?? '');
 
     let xmlDirty = false;
     if ('title' in changes) { item.Title = changes.title; xmlDirty = true; }
@@ -276,7 +317,7 @@ export class ScrivenerProject {
     this._save();
 
     if (itemDef.content) this.writeContent(uuid, itemDef.content);
-    if (itemDef.synopsis) this.writeSynopsis(uuid, itemDef.synopsis);
+    if (itemDef.synopsis) this.writeSynopsis(uuid, itemDef.synopsis, itemDef.title ?? 'Untitled');
 
     return uuid;
   }
@@ -362,7 +403,7 @@ export class ScrivenerProject {
       const children = item.children ?? [];
       if (children.length > 0) node.Children = { BinderItem: children.map(buildItem) };
 
-      if (item.content || item.synopsis) pendingContent.push({ uuid, content: item.content, synopsis: item.synopsis });
+      if (item.content || item.synopsis) pendingContent.push({ uuid, title: item.title ?? 'Untitled', content: item.content, synopsis: item.synopsis });
 
       return node;
     }
@@ -428,9 +469,9 @@ export class ScrivenerProject {
     writeFileSync(join(scrivPath, `${safeName}.scrivx`), xml, 'utf8');
 
     const project = new ScrivenerProject(scrivPath, { platform });
-    for (const { uuid, content, synopsis } of pendingContent) {
+    for (const { uuid, title, content, synopsis } of pendingContent) {
       if (content) project.writeContent(uuid, content);
-      if (synopsis) project.writeSynopsis(uuid, synopsis);
+      if (synopsis) project.writeSynopsis(uuid, synopsis, title);
     }
     return project;
   }
