@@ -80,11 +80,12 @@ function scrivenerRoundTrip(scrivPath, waitSecs = WAIT_SECS) {
     'end tell',
   ], { timeout: (waitSecs + 20) * 1000 });
 
-  // Step 2: Close by name (soft failure — auto-save already flushed data)
+  // Step 2: Close by name with saving:no to suppress the save dialog
+  // (soft failure — auto-save already flushed data to disk)
   try {
     runScript([
       'tell application "Scrivener"',
-      `    close document "${safeDoc}"`,
+      `    close document "${safeDoc}" saving no`,
       'end tell',
     ], { timeout: 10000 });
   } catch {
@@ -92,6 +93,22 @@ function scrivenerRoundTrip(scrivPath, waitSecs = WAIT_SECS) {
     // in-flight write finish before the caller reads the file.
     execSync('sleep 1', { stdio: 'ignore' });
   }
+}
+
+// Best-effort close of a named Scrivener document. Used in after() hooks so
+// that even if the round-trip close failed mid-test, the window is cleaned up.
+function closeScrivenerDoc(docName) {
+  const safeDoc = docName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const f = join(tmpdir(), `scriv-close-${Date.now()}.applescript`);
+  writeFileSync(f, [
+    'tell application "Scrivener"',
+    `    close document "${safeDoc}" saving no`,
+    'end tell',
+  ].join('\n'), 'utf8');
+  try {
+    execSync(`osascript "${f}"`, { stdio: 'ignore', timeout: 10000 });
+  } catch { /* already closed or not open — ignore */ }
+  try { unlinkSync(f); } catch { /* ignore */ }
 }
 
 describe('Scrivener round-trip compatibility', { skip: SKIP_REASON }, () => {
@@ -203,10 +220,11 @@ describe('Scrivener round-trip compatibility', { skip: SKIP_REASON }, () => {
 
     // ── IncludeInCompile ──────────────────────────────────────────────────────
 
-    it('Scene 1.3 includeInCompile is still "No"', () => {
-      assert.equal(
-        project.findItem(uuids['Scene 1.3 — EXCLUDED']).MetaData.IncludeInCompile,
-        'No',
+    it('Scene 1.3 is excluded from compile after round-trip', () => {
+      // Scrivener represents "excluded" as absent element (not 'No'), so check !== 'Yes'
+      assert.ok(
+        project.findItem(uuids['Scene 1.3 — EXCLUDED']).MetaData.IncludeInCompile !== 'Yes',
+        'Scene 1.3 should be excluded from compile',
       );
     });
 
@@ -251,6 +269,7 @@ describe('Scrivener round-trip compatibility', { skip: SKIP_REASON }, () => {
     });
 
     after(() => {
+      closeScrivenerDoc('MCP Compat — Creation');
       console.log(`  Phase 1 project left at: ${project.scrivPath}`);
     });
   });
@@ -439,6 +458,7 @@ describe('Scrivener round-trip compatibility', { skip: SKIP_REASON }, () => {
     });
 
     after(() => {
+      closeScrivenerDoc('MCP Compat — Writes');
       console.log(`  Phase 2 project left at: ${project.scrivPath}`);
     });
   });
