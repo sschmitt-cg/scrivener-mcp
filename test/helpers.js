@@ -4,9 +4,12 @@ import { fileURLToPath } from 'url';
 import { ScrivenerProject } from '../src/scrivener.js';
 import { TEST_PROJECT } from './fixtures.js';
 
-// Stable output directory — gitignored, persists across runs so the projects
-// can be opened in Scrivener after the test suite finishes.
-export const SCRATCH_DIR = join(dirname(fileURLToPath(import.meta.url)), 'scratch');
+// If SCRIV_DIR is configured (the same env var the MCP server uses), put test
+// projects there under a /test subfolder so Scrivener can find them alongside
+// real projects. Falls back to test/scratch/ when SCRIV_DIR is not set.
+export const SCRATCH_DIR = process.env.SCRIV_DIR
+  ? join(process.env.SCRIV_DIR, 'test')
+  : join(dirname(fileURLToPath(import.meta.url)), 'scratch');
 
 // Creates (or recreates) a test project at SCRATCH_DIR/<name>.scriv.
 // Deletes any pre-existing project with the same name so `create()` never

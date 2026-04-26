@@ -15,14 +15,16 @@ npm run test:read  # read tests only  (~60 ms)
 npm run test:write # write tests only (~200 ms)
 ```
 
-Each run **recreates** two Scrivener projects from scratch in `test/scratch/` (the directory is gitignored):
+Each run **recreates** two Scrivener projects from scratch. Where they land depends on whether `SCRIV_DIR` is set:
 
-| Project | Path |
-|---------|------|
-| Read tests | `test/scratch/MCP Test Suite.scriv` |
-| Write tests | `test/scratch/MCP Write Tests.scriv` |
+| `SCRIV_DIR` set? | Project location |
+|-----------------|-----------------|
+| Yes | `$SCRIV_DIR/test/MCP Test Suite.scriv` and `$SCRIV_DIR/test/MCP Write Tests.scriv` |
+| No  | `test/scratch/MCP Test Suite.scriv` and `test/scratch/MCP Write Tests.scriv` |
 
-The projects are overwritten on every run, so the files in `test/scratch/` always reflect the most recent test execution.
+Using `SCRIV_DIR` puts the test projects right alongside your real projects, so Scrivener's file browser finds them without any extra navigation. The `test/scratch/` fallback is gitignored.
+
+The projects are overwritten on every run, so they always reflect the most recent test execution.
 
 > **Important:** Close Scrivener before running the write tests, or Scrivener's auto-save will overwrite the changes the tests make. Reopen the projects after `npm test` finishes.
 
