@@ -7,7 +7,8 @@
     "start": "node src/index.js",
     "test": "node --test test/read.test.js test/write.test.js",
     "test:read": "node --test test/read.test.js",
-    "test:write": "node --test test/write.test.js"
+    "test:write": "node --test test/write.test.js",
+    "test:compat": "node --test test/compat.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

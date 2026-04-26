@@ -1,8 +1,9 @@
 # Testing the Scrivener MCP
 
-There are two kinds of tests:
+There are three kinds of tests:
 
 - **Automated** — `node:test` assertions that create Scrivener projects, call the `ScrivenerProject` class directly, and verify every read and write operation produces the expected output. No human needed; all 85 pass or fail on their own.
+- **Compatibility** — A second automated suite that pushes test projects through a real Scrivener open/save cycle and re-asserts all values, catching format mismatches that only manifest inside Scrivener. Requires macOS with Scrivener installed; auto-skips otherwise.
 - **In-app** — After the automated tests run, open the generated projects in Scrivener and work through the checklists below to confirm the data looks correct in the UI.
 
 ---
@@ -10,10 +11,22 @@ There are two kinds of tests:
 ## Running the tests
 
 ```bash
-npm test           # full suite  (read + write, ~270 ms)
-npm run test:read  # read tests only  (~60 ms)
-npm run test:write # write tests only (~200 ms)
+npm test              # fast suite (read + write, ~270 ms) — no Scrivener required
+npm run test:read     # read tests only  (~60 ms)
+npm run test:write    # write tests only (~200 ms)
+npm run test:compat   # Scrivener round-trip compatibility (~15–25 s, macOS + Scrivener required)
 ```
+
+### Compatibility tests
+
+`test:compat` opens each test project in Scrivener via AppleScript, waits for Scrivener to process and auto-save it, closes the document, then re-reads the project with our code and asserts all values are intact. This catches bugs that only appear when Scrivener rewrites the XML (e.g. the `fix/scrivener-id-format` regression).
+
+**Prerequisites:**
+- macOS with `/Applications/Scrivener.app` installed
+- Scrivener should not already have the test projects open
+- If tests are unexpectedly slow or flaky, set `SCRIV_WAIT_SECS=10` to give Scrivener more processing time
+
+The suite auto-skips gracefully when Scrivener is not present, so it is safe to run on any machine.
 
 Each run **recreates** two Scrivener projects from scratch. Where they land depends on whether `SCRIV_DIR` is set:
 
