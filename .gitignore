@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Claude Code
 .claude/
+
+# Test scratch projects (created by npm test, opened in Scrivener for verification)
+test/scratch/
