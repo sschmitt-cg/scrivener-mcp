@@ -171,7 +171,7 @@ This project starts identical to the read project, then the write tests mutate i
 
 ### `moveItem` — Binder structure
 - [ ] Chapter 1 — The World Begins now has **2** children (Scene 1.3 was moved out)
-- [ ] Chapter 2 — Inciting Incident now has **3** children (Scene 1.3 moved in)
+- [ ] Chapter 2 — Inciting Incident now has **2** children (Scene 1.3 moved in, Scene 2.1 moved out)
 - [ ] Scene 1.3 — EXCLUDED body still reads: *This was cut.*
 - [ ] Scene 1.3 — EXCLUDED synopsis still reads: *A cut scene.*
 - [ ] *Scene 2.1 — The Letter Arrives* appears as a direct child of Manuscript (top level)
