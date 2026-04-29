@@ -277,6 +277,9 @@ export class ScrivenerProject {
   _load() {
     const xml = readFileSync(this.scrivxPath, 'utf8');
     this._doc = new XMLParser(PARSER_OPTIONS).parse(xml);
+    // XMLParser stores the XML declaration as "?xml"; if we leave it in _doc,
+    // XMLBuilder will re-emit it and _save() would prepend a second one.
+    delete this._doc['?xml'];
   }
 
   reload() {
@@ -324,7 +327,7 @@ export class ScrivenerProject {
       type: item['@_Type'] ?? '',
       title: item.Title ?? '',
       depth,
-      synopsis: item.Synopsis ?? meta.Synopsis ?? '',
+      synopsis: this.readSynopsis(item['@_UUID'] ?? ''),
       labelId: String(meta.LabelID ?? ''),
       statusId: String(meta.StatusID ?? ''),
       includeInCompile: meta.IncludeInCompile ?? '',
@@ -350,7 +353,10 @@ export class ScrivenerProject {
   }
 
   getStatuses() {
-    const statuses = this._doc?.ScrivenerProject?.StatusSettings?.Statuses?.Status ?? [];
+    const st = this._doc?.ScrivenerProject?.StatusSettings;
+    // Scrivener's native format uses StatusItems; our create() also writes StatusItems.
+    // Fall back to Statuses for any projects created by older versions of this code.
+    const statuses = st?.StatusItems?.Status ?? st?.Statuses?.Status ?? [];
     return Object.fromEntries(
       statuses.map((s) => [String(s['@_ID'] ?? ''), s['#text'] ?? String(s)])
     );
@@ -396,15 +402,91 @@ export class ScrivenerProject {
     writeFileSync(join(dir, 'content.rtf'), buildRtf(plainText, this.platform), 'utf8');
   }
 
+  readSynopsis(uuid) {
+    const synopsisPath = join(this.scrivPath, 'Files', 'Data', uuid, 'synopsis.txt');
+    try {
+      return readFileSync(synopsisPath, 'utf8');
+    } catch {
+      return '';
+    }
+  }
+
+  _escapeXml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Scrivener renders corkboard/outline synopses from Files/search.indexes,
+  // not by reading synopsis.txt directly on open. Keep both in sync.
+  _updateSearchIndex(uuid, title, synopsis) {
+    const indexPath = join(this.scrivPath, 'Files', 'search.indexes');
+    let content;
+    try {
+      content = readFileSync(indexPath, 'utf8');
+    } catch {
+      content = '<?xml version="1.0" encoding="UTF-8"?>\n<SearchIndexes Version="1.0">\n    <Documents>\n    </Documents>\n</SearchIndexes>\n';
+    }
+
+    const synopsisTag = `<Synopsis>${this._escapeXml(synopsis)}</Synopsis>`;
+    const docRe = new RegExp(`(        <Document ID="${uuid}">[\\s\\S]*?        </Document>)`);
+    const docMatch = content.match(docRe);
+
+    if (docMatch) {
+      let block = docMatch[1];
+      if (/<Synopsis>/.test(block)) {
+        block = block.replace(/<Synopsis>[\s\S]*?<\/Synopsis>/, synopsisTag);
+      } else {
+        block = block.replace(/(<\/Title>)/, `$1\n            ${synopsisTag}`);
+      }
+      content = content.replace(docRe, block);
+    } else {
+      const newDoc = [
+        `        <Document ID="${uuid}">`,
+        `            <Title>${this._escapeXml(title)}</Title>`,
+        `            ${synopsisTag}`,
+        `        </Document>`,
+      ].join('\n');
+      content = content.replace('    </Documents>', `${newDoc}\n    </Documents>`);
+    }
+
+    writeFileSync(indexPath, content, 'utf8');
+  }
+
+  writeSynopsis(uuid, text, title = '') {
+    const dir = join(this.scrivPath, 'Files', 'Data', uuid);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'synopsis.txt'), text, 'utf8');
+    this._updateSearchIndex(uuid, title, text);
+  }
+
+  // Returns true if the .scrivx XML was modified. Synopsis-only changes
+  // persist to disk via writeSynopsis and don't dirty the binder XML.
   _applyMetadataChanges(item, changes) {
     if (!item.MetaData) item.MetaData = {};
-    if ('title' in changes) item.Title = decodeUnicodeEscapes(changes.title);
-    if ('synopsis' in changes) item.Synopsis = decodeUnicodeEscapes(changes.synopsis);
-    if ('labelId' in changes) item.MetaData.LabelID = String(changes.labelId);
-    if ('statusId' in changes) item.MetaData.StatusID = String(changes.statusId);
+    let xmlDirty = false;
+    if ('title' in changes) {
+      item.Title = decodeUnicodeEscapes(changes.title);
+      xmlDirty = true;
+    }
+    if ('synopsis' in changes) {
+      this.writeSynopsis(
+        item['@_UUID'] ?? '',
+        decodeUnicodeEscapes(changes.synopsis),
+        item.Title ?? ''
+      );
+    }
+    if ('labelId' in changes) {
+      item.MetaData.LabelID = String(changes.labelId);
+      xmlDirty = true;
+    }
+    if ('statusId' in changes) {
+      item.MetaData.StatusID = String(changes.statusId);
+      xmlDirty = true;
+    }
     if ('includeInCompile' in changes) {
       item.MetaData.IncludeInCompile = changes.includeInCompile ? 'Yes' : 'No';
+      xmlDirty = true;
     }
+    return xmlDirty;
   }
 
   updateMetadata(uuid, changes) {
@@ -412,23 +494,24 @@ export class ScrivenerProject {
     this.reload();
     const item = this.findItem(uuid);
     if (!item) throw new Error(`Item not found: ${uuid}`);
-    this._applyMetadataChanges(item, changes);
-    this._save();
+    const xmlDirty = this._applyMetadataChanges(item, changes);
+    if (xmlDirty) this._save();
   }
 
   batchUpdateMetadata(updates) {
     this._assertWritable();
     this.reload();
     const errors = [];
+    let anyXmlDirty = false;
     for (const { uuid, changes } of updates) {
       const item = this.findItem(uuid);
       if (!item) {
         errors.push({ uuid, error: 'not found' });
         continue;
       }
-      this._applyMetadataChanges(item, changes);
+      if (this._applyMetadataChanges(item, changes)) anyXmlDirty = true;
     }
-    this._save();
+    if (anyXmlDirty) this._save();
     return { applied: updates.length - errors.length, errors };
   }
 
@@ -489,8 +572,6 @@ export class ScrivenerProject {
       Title: decodeUnicodeEscapes(itemDef.title ?? 'Untitled'),
     };
 
-    if (itemDef.synopsis) node.Synopsis = decodeUnicodeEscapes(itemDef.synopsis);
-
     const meta = {
       IncludeInCompile: itemDef.includeInCompile === false ? 'No' : 'Yes',
       Created: now,
@@ -500,12 +581,27 @@ export class ScrivenerProject {
     if (statusId !== undefined) meta.StatusID = statusId;
     node.MetaData = meta;
 
-    this._targetChildren(parentUuid).push(node);
-    this._save();
-
+    // Write supporting files BEFORE saving the binder XML. Two reasons:
+    //   - FSEvents safety: if Scrivener is watching, supporting files are
+    //     in place by the time the .scrivx write fires the watcher.
+    //   - Synopsis-only Text items: writing an empty content.rtf gives
+    //     Scrivener something concrete to bind to, preventing recovery
+    //     passes from garbage-collecting metadata-only documents.
+    // Use _writeContentRaw (not writeContent) to skip the reload that
+    // would clobber our in-memory binder before we push the new node.
+    if (itemDef.synopsis) {
+      this.writeSynopsis(
+        uuid,
+        decodeUnicodeEscapes(itemDef.synopsis),
+        decodeUnicodeEscapes(itemDef.title ?? 'Untitled')
+      );
+    }
     if (type === 'Text') {
       this._writeContentRaw(uuid, decodeUnicodeEscapes(itemDef.content ?? ''));
     }
+
+    this._targetChildren(parentUuid).push(node);
+    this._save();
 
     return uuid;
   }
@@ -530,7 +626,7 @@ export class ScrivenerProject {
       uuid,
       type,
       title: item.Title ?? '',
-      synopsis: item.Synopsis ?? meta.Synopsis ?? '',
+      synopsis: this.readSynopsis(item['@_UUID'] ?? ''),
       label: labels[String(meta.LabelID ?? '')] ?? '',
       status: statuses[String(meta.StatusID ?? '')] ?? '',
       includeInCompile: meta.IncludeInCompile ?? '',
@@ -592,6 +688,7 @@ export class ScrivenerProject {
     if (existsSync(scrivPath)) throw new Error(`Project already exists: ${packageName}`);
 
     mkdirSync(join(scrivPath, 'Files', 'Data'), { recursive: true });
+    mkdirSync(join(scrivPath, 'Settings'), { recursive: true });
 
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
     let nextId = 1;
@@ -600,7 +697,7 @@ export class ScrivenerProject {
     const labelMap = Object.fromEntries(
       labels.map((l, i) => [typeof l === 'string' ? l : l.name, String(i + 1)])
     );
-    const statusMap = Object.fromEntries(statuses.map((s, i) => [s, String(i + 1)]));
+    const statusMap = Object.fromEntries(statuses.map((s, i) => [s, String(i)]));
 
     function buildItem(item) {
       const uuid = randomUUID().toUpperCase();
@@ -611,8 +708,6 @@ export class ScrivenerProject {
         '@_Type': type,
         Title: decodeUnicodeEscapes(item.title ?? 'Untitled'),
       };
-
-      if (item.synopsis) node.Synopsis = decodeUnicodeEscapes(item.synopsis);
 
       const meta = {
         IncludeInCompile: item.includeInCompile === false ? 'No' : 'Yes',
@@ -626,8 +721,18 @@ export class ScrivenerProject {
       const children = item.children ?? [];
       if (children.length > 0) node.Children = { BinderItem: children.map(buildItem) };
 
-      if (type === 'Text') {
-        pendingContent.push({ uuid, content: decodeUnicodeEscapes(item.content ?? '') });
+      // Always queue Text items so an empty content.rtf gets written for
+      // synopsis-only items (otherwise Scrivener's recovery pass garbage-
+      // collects them). Queue any item with a synopsis so writeSynopsis
+      // populates synopsis.txt + search.indexes.
+      if (type === 'Text' || item.synopsis) {
+        pendingContent.push({
+          uuid,
+          type,
+          title: decodeUnicodeEscapes(item.title ?? 'Untitled'),
+          content: decodeUnicodeEscapes(item.content ?? ''),
+          synopsis: item.synopsis ? decodeUnicodeEscapes(item.synopsis) : undefined,
+        });
       }
 
       return node;
@@ -664,7 +769,7 @@ export class ScrivenerProject {
     ];
 
     const labelNodes = [
-      { '@_ID': '0', '#text': 'No Label' },
+      { '@_ID': '-1', '#text': 'No Label' },
       ...labels.map((l, i) => {
         const labelName = typeof l === 'string' ? l : l.name;
         const colorKey = typeof l === 'object' ? l.color : undefined;
@@ -674,8 +779,8 @@ export class ScrivenerProject {
     ];
 
     const statusNodes = [
-      { '@_ID': '0', '#text': 'No Status' },
-      ...statuses.map((s, i) => ({ '@_ID': String(i + 1), '#text': s })),
+      { '@_ID': '-1', '#text': 'No Status' },
+      ...statuses.map((s, i) => ({ '@_ID': String(i), '#text': s })),
     ];
 
     const doc = {
@@ -684,8 +789,8 @@ export class ScrivenerProject {
         '@_Creator': 'scrivener3',
         '@_Modified': now,
         Binder: { BinderItem: binderItems },
-        LabelSettings: { Labels: { Label: labelNodes } },
-        StatusSettings: { Statuses: { Status: statusNodes } },
+        LabelSettings: { DefaultLabelID: '-1', Labels: { Label: labelNodes } },
+        StatusSettings: { Title: 'Status', DefaultStatusID: '-1', StatusItems: { Status: statusNodes } },
       },
     };
 
@@ -697,8 +802,9 @@ export class ScrivenerProject {
     writeFileSync(join(scrivPath, 'Files', 'binder.autosave'), zipSingleFile(scrivxName, xmlBuf));
 
     const project = new ScrivenerProject(scrivPath, { platform });
-    for (const { uuid, content } of pendingContent) {
-      project._writeContentRaw(uuid, content);
+    for (const { uuid, type, title, content, synopsis } of pendingContent) {
+      if (type === 'Text') project._writeContentRaw(uuid, content);
+      if (synopsis) project.writeSynopsis(uuid, synopsis, title);
     }
     return project;
   }
