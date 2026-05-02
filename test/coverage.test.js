@@ -18,7 +18,9 @@ import assert from 'node:assert/strict';
 import {
   readFileSync, writeFileSync, unlinkSync, existsSync, statSync, mkdirSync, rmSync,
 } from 'fs';
-import { join } from 'path';
+import { join, dirname, basename } from 'path';
+import { fileURLToPath } from 'url';
+import { inflateRawSync } from 'zlib';
 import { ScrivenerProject } from '../src/scrivener.js';
 import { SCRATCH_DIR, createTestProject, buildTitleMap, findOutlineNode } from './helpers.js';
 import { LABEL_IDS, STATUS_IDS } from './fixtures.js';
@@ -351,6 +353,25 @@ describe('write safety — Files/user.lock + binder.autosave', () => {
       stat.mtimeMs > mtimeBefore || stat.size !== sizeBefore,
       'binder.autosave should be rewritten on save',
     );
+  });
+
+  it('binder.autosave stored entry filename matches the .scrivx filename', () => {
+    const buf = readFileSync(join(project.scrivPath, 'Files', 'binder.autosave'));
+    const nameLen = buf.readUInt16LE(26);
+    const storedName = buf.subarray(30, 30 + nameLen).toString('utf8');
+    assert.equal(storedName, basename(project.scrivxPath));
+  });
+
+  it('binder.autosave decompresses to the exact .scrivx content (round-trip)', () => {
+    const buf = readFileSync(join(project.scrivPath, 'Files', 'binder.autosave'));
+    // Parse the ZIP local file header to locate the compressed payload.
+    // Header layout: 30 fixed bytes, then filename (len at offset 26), then extra field (len at offset 28).
+    const nameLen = buf.readUInt16LE(26);
+    const extraLen = buf.readUInt16LE(28);
+    const compSize = buf.readUInt32LE(18);
+    const dataStart = 30 + nameLen + extraLen;
+    const decompressed = inflateRawSync(buf.subarray(dataStart, dataStart + compSize));
+    assert.deepEqual(decompressed, readFileSync(project.scrivxPath));
   });
 });
 
