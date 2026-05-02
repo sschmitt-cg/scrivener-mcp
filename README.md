@@ -99,13 +99,15 @@ Restart Claude Desktop after saving.
 
 | Tool | Description |
 |---|---|
-| `get_outline` | Returns the full binder as a nested tree with synopses, labels, and statuses. The best starting point for understanding and working on a project's structure. |
+| `get_outline(rootUuid?, includeContent?)` | Returns the binder as a nested tree with synopses, labels, and statuses. Pass `rootUuid` to scope to a subtree, and `includeContent: true` to inline prose directly into the tree (one call instead of many `get_document` calls). The best starting point for understanding and working on a project's structure. |
 | `list_documents` | Returns the binder as a flat list with depth indicators. Useful for getting UUIDs. |
 | `get_document(uuid)` | Returns metadata and plain text content for a single document. |
+| `get_documents(uuids)` | Batch version of `get_document` — returns metadata and content for many documents in a single call. |
 | `add_document(...)` | Adds a new document or folder to the binder. |
 | `move_document(uuid, newParentUuid)` | Moves a binder item to a different parent folder. |
 | `write_document(uuid, content)` | Writes new plain text content to a document (stored as RTF). |
 | `update_metadata(uuid, changes)` | Updates title, synopsis, label, status, or compile inclusion. |
+| `batch_update_metadata(updates)` | Batch version of `update_metadata` — applies many changes in a single `.scrivx` write. |
 | `search_documents(query)` | Searches titles and synopses across the binder. |
 
 ---
@@ -206,7 +208,8 @@ The intended pattern is to work with Claude on the structure and content of a pr
 
 ## Notes
 
-- **Close Scrivener before writing.** `write_document`, `update_metadata`, `add_document`, and `move_document` all modify project files directly. If Scrivener has the project open, it will overwrite changes on its next auto-save.
-- **Reload after editing in Scrivener.** Call `open_project` again to reload a project that was modified in Scrivener while the server was running.
+- **Close Scrivener before writing.** `write_document`, `update_metadata`, `add_document`, and `move_document` modify project files directly. The server detects an open Scrivener instance via the `Files/user.lock` file Scrivener creates and refuses to write while it exists, so concurrent edits won't silently corrupt the project. Close Scrivener and retry.
+- **Mutations re-read state automatically.** Each mutating call reloads the `.scrivx` from disk before writing, so external edits made between MCP calls aren't overwritten.
+- **`binder.autosave` is kept in sync.** Every binder write also refreshes `Files/binder.autosave` (the zipped snapshot Scrivener cross-references on launch). Without this, Scrivener can decide the on-disk binder is "newer than expected" and shunt MCP-added items into a "Recovered Files" folder.
 - `write_document` generates minimal RTF compatible with Scrivener 3. Non-ASCII characters are Unicode-escaped.
 - Label and status IDs are discoverable via `list_documents` — `labelId`/`statusId` are raw IDs, `label`/`status` are the resolved names.

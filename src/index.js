@@ -163,7 +163,7 @@ Use this to scaffold a writing project from an idea: define the manuscript struc
   },
   {
     name: 'write_document',
-    description: 'Writes new plain text content to a document. WARNING: Scrivener must be closed before calling this — if the project is open, Scrivener will overwrite these changes on its next auto-save.',
+    description: 'Writes new plain text content to an existing document. The UUID must already be in the binder (use add_document to create a new document). The call will fail with a clear error if Scrivener has the project open — close Scrivener first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -175,7 +175,7 @@ Use this to scaffold a writing project from an idea: define the manuscript struc
   },
   {
     name: 'update_metadata',
-    description: 'Updates title, synopsis, label, status, or includeInCompile for a document. WARNING: Scrivener must be closed before calling this — if the project is open, Scrivener will overwrite these changes on its next auto-save.',
+    description: 'Updates title, synopsis, label, status, or includeInCompile for a document. Will fail with a clear error if Scrivener has the project open — close Scrivener first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -196,6 +196,37 @@ Use this to scaffold a writing project from an idea: define the manuscript struc
     },
   },
   {
+    name: 'batch_update_metadata',
+    description: `Batch version of update_metadata. Applies many metadata changes in a single .scrivx write, reducing the conflict window and the per-call overhead. Each entry has the same {uuid, changes} shape as update_metadata. UUIDs not found in the binder are reported in the response rather than throwing. Will fail with a clear error if Scrivener has the project open.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        updates: {
+          type: 'array',
+          description: 'List of per-document metadata updates to apply atomically.',
+          items: {
+            type: 'object',
+            properties: {
+              uuid: { type: 'string' },
+              changes: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string' },
+                  synopsis: { type: 'string' },
+                  labelId: { type: 'string' },
+                  statusId: { type: 'string' },
+                  includeInCompile: { type: 'boolean' },
+                },
+              },
+            },
+            required: ['uuid', 'changes'],
+          },
+        },
+      },
+      required: ['updates'],
+    },
+  },
+  {
     name: 'search_documents',
     description: 'Searches title and synopsis across all binder items in the active project.',
     inputSchema: {
@@ -208,16 +239,45 @@ Use this to scaffold a writing project from an idea: define the manuscript struc
   },
   {
     name: 'get_outline',
-    description: `Returns the full binder as a nested tree with synopses, labels, and statuses — the single best tool for understanding a project's structure before suggesting or making changes.
+    description: `Returns the binder as a nested tree with synopses, labels, and statuses — the single best tool for understanding a project's structure before suggesting or making changes.
 
-Each node in the tree corresponds to a Scrivener index card. The synopsis is what appears on that card in the corkboard. Use this to see the story shape at a glance: which acts exist, how chapters are distributed, which scenes have synopses and which are blank, where structural gaps or imbalances are, and how labels and statuses are distributed across the manuscript.
+Each node corresponds to a Scrivener index card. The synopsis is what appears on the corkboard. Use this to see the story shape at a glance: which acts exist, how chapters are distributed, which scenes have synopses and which are blank, where structural gaps or imbalances are, and how labels and statuses are distributed.
 
-Call this before adding, moving, or proposing structural changes.`,
-    inputSchema: { type: 'object', properties: {} },
+Token-efficient context loading: pass includeContent=true to inline document text directly into the tree, collapsing what would otherwise be many separate get_document calls into one. To stay within reasonable context limits on large projects, scope to a subtree with rootUuid (e.g. one chapter or act) when you only need part of the manuscript.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rootUuid: {
+          type: 'string',
+          description: 'UUID of a binder item to use as the root of the returned tree. Omit to return the full binder.',
+        },
+        includeContent: {
+          type: 'boolean',
+          description: 'If true, include the full plain-text content of every Text item in the tree (Folders never have content). Useful for loading prose context in a single call. Defaults to false.',
+        },
+      },
+    },
+  },
+  {
+    name: 'get_documents',
+    description: `Batch version of get_document. Returns metadata and plain text content for many documents in a single call.
+
+Use this when you need the prose for several specific documents (e.g. the previous three scenes for continuity, or every Text item with a particular label). Cheaper than calling get_document repeatedly. Items not found are returned with an "error" field rather than throwing.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uuids: {
+          type: 'array',
+          description: 'UUIDs of documents to fetch. Order is preserved in the response.',
+          items: { type: 'string' },
+        },
+      },
+      required: ['uuids'],
+    },
   },
   {
     name: 'add_document',
-    description: `Adds a new document or folder to the binder of the active project. WARNING: Scrivener must be closed — changes will be overwritten by Scrivener's auto-save if the project is open.
+    description: `Adds a new document or folder to the binder of the active project. Will fail with a clear error if Scrivener has the project open — close Scrivener first.
 
 Use this to extend the structure of an existing project: add a new scene to a chapter, a new chapter to an act, a new research note, or a whole new folder. Always populate synopsis — it is the index card text that makes the corkboard and outliner useful for structural reasoning.
 
@@ -249,7 +309,7 @@ If parentUuid is omitted, the item is appended to the top level of the Manuscrip
   },
   {
     name: 'move_document',
-    description: `Moves a binder item to a different parent folder. WARNING: Scrivener must be closed — changes will be overwritten by Scrivener's auto-save if the project is open.
+    description: `Moves a binder item to a different parent folder. Will fail with a clear error if Scrivener has the project open — close Scrivener first.
 
 Use this to restructure the project: move a scene from one chapter to another, promote a scene to chapter level, reorganise acts, or move a document into the Research folder. The item retains all its content and metadata; only its position in the hierarchy changes.
 
@@ -378,6 +438,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'batch_update_metadata': {
+        const project = requireProject();
+        const { updates } = args;
+        const result = project.batchUpdateMetadata(updates);
+        return {
+          content: [{
+            type: 'text',
+            text: `Batch update applied ${result.applied}/${updates.length}.` +
+              (result.errors.length ? `\nErrors:\n${JSON.stringify(result.errors, null, 2)}` : ''),
+          }],
+        };
+      }
+
       case 'search_documents': {
         const project = requireProject();
         const { query } = args;
@@ -394,7 +467,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'get_outline': {
         const project = requireProject();
-        return { content: [{ type: 'text', text: JSON.stringify(project.getOutline(), null, 2) }] };
+        const { rootUuid, includeContent } = args ?? {};
+        const outline = project.getOutline({ rootUuid, includeContent });
+        return { content: [{ type: 'text', text: JSON.stringify(outline, null, 2) }] };
+      }
+
+      case 'get_documents': {
+        const project = requireProject();
+        const { uuids } = args;
+        return { content: [{ type: 'text', text: JSON.stringify(project.getDocuments(uuids), null, 2) }] };
       }
 
       case 'add_document': {

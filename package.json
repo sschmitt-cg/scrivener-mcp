@@ -5,9 +5,10 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test test/read.test.js test/write.test.js",
+    "test": "node --test test/read.test.js test/write.test.js test/coverage.test.js",
     "test:read": "node --test test/read.test.js",
     "test:write": "node --test test/write.test.js",
+    "test:coverage": "node --test test/coverage.test.js",
     "test:compat": "node --test test/compat.test.js"
   },
   "dependencies": {

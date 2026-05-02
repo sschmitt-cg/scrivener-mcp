@@ -1,19 +1,199 @@
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, basename } from 'path';
 import { randomUUID } from 'crypto';
+import { deflateRawSync } from 'zlib';
 import { XMLParser, XMLBuilder } from 'fast-xml-parser';
 
+const CRC32_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) c = (c & 1) ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(buf) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) c = CRC32_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+function zipSingleFile(filename, data) {
+  const nameBuf = Buffer.from(filename, 'utf8');
+  const compressed = deflateRawSync(data);
+  const crc = crc32(data);
+  const uncompSize = data.length;
+  const compSize = compressed.length;
+
+  const now = new Date();
+  const dosTime = ((now.getHours() & 0x1F) << 11) | ((now.getMinutes() & 0x3F) << 5) | ((now.getSeconds() >>> 1) & 0x1F);
+  const dosDate = (((now.getFullYear() - 1980) & 0x7F) << 9) | (((now.getMonth() + 1) & 0xF) << 5) | (now.getDate() & 0x1F);
+
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(0, 6);
+  local.writeUInt16LE(8, 8);
+  local.writeUInt16LE(dosTime, 10);
+  local.writeUInt16LE(dosDate, 12);
+  local.writeUInt32LE(crc, 14);
+  local.writeUInt32LE(compSize, 18);
+  local.writeUInt32LE(uncompSize, 22);
+  local.writeUInt16LE(nameBuf.length, 26);
+  local.writeUInt16LE(0, 28);
+
+  const cd = Buffer.alloc(46);
+  cd.writeUInt32LE(0x02014b50, 0);
+  cd.writeUInt16LE(0x033F, 4);
+  cd.writeUInt16LE(20, 6);
+  cd.writeUInt16LE(0, 8);
+  cd.writeUInt16LE(8, 10);
+  cd.writeUInt16LE(dosTime, 12);
+  cd.writeUInt16LE(dosDate, 14);
+  cd.writeUInt32LE(crc, 16);
+  cd.writeUInt32LE(compSize, 20);
+  cd.writeUInt32LE(uncompSize, 24);
+  cd.writeUInt16LE(nameBuf.length, 28);
+  cd.writeUInt16LE(0, 30);
+  cd.writeUInt16LE(0, 32);
+  cd.writeUInt16LE(0, 34);
+  cd.writeUInt16LE(0, 36);
+  cd.writeUInt32LE(0, 38);
+  cd.writeUInt32LE(0, 42);
+
+  const cdSize = cd.length + nameBuf.length;
+  const cdOffset = local.length + nameBuf.length + compSize;
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(cdSize, 12);
+  eocd.writeUInt32LE(cdOffset, 16);
+  eocd.writeUInt16LE(0, 20);
+
+  return Buffer.concat([local, nameBuf, compressed, cd, nameBuf, eocd]);
+}
+
+const RTF_DESTINATIONS = new Set([
+  'fonttbl', 'colortbl', 'stylesheet', 'info', 'filetbl',
+  'listtable', 'listoverridetable', 'revtbl', 'rsidtbl',
+  'themedata', 'latentstyles', 'datastore', 'generator',
+  'operator', 'author', 'title', 'subject', 'keywords',
+  'comment', 'doccomm', 'company', 'pict', 'shppict',
+  'nonshppict', 'object', 'objclass', 'objdata', 'result',
+  'falt', 'panose', 'fontemb', 'fontfile', 'xmlnstbl',
+  'wgrffmtfilter', 'protusertbl', 'header', 'footer',
+  'headerl', 'headerr', 'headerf', 'footerl', 'footerr',
+  'footerf', 'footnote', 'annotation', 'bkmkstart', 'bkmkend',
+  'field', 'fldinst', 'datafield', 'private', 'pntext',
+  'category',
+]);
+
+const RTF_SYMBOLS = {
+  par: '\n', line: '\n', sect: '\n', tab: '\t',
+  emdash: '\u2014', endash: '\u2013',
+  lquote: '\u2018', rquote: '\u2019',
+  ldblquote: '\u201C', rdblquote: '\u201D',
+  bullet: '\u2022',
+};
+
 function stripRtf(rtf) {
-  return rtf
-    .replace(/\{\\[^{}]*\}/g, '')
-    .replace(/\\par\b\*?/g, '\n')
-    .replace(/\\line\b\*?/g, '\n')
-    .replace(/\\tab\b/g, '\t')
-    .replace(/\\\n/g, '\n')
-    .replace(/\\u(\d+)\??/g, (_, code) => String.fromCharCode(parseInt(code, 10)))
-    .replace(/\\'([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-    .replace(/\\[a-z*]+\d*\b\*?/g, '')
-    .replace(/[{}\\]/g, '')
+  let out = '';
+  let depth = 0;
+  let skipDepth = 0;
+  let i = 0;
+  const len = rtf.length;
+
+  while (i < len) {
+    const ch = rtf[i];
+
+    if (ch === '{') {
+      depth++;
+      let j = i + 1;
+      let isDestination = false;
+      if (rtf[j] === '\\' && rtf[j + 1] === '*') {
+        isDestination = true;
+      } else if (rtf[j] === '\\' && /[a-zA-Z]/.test(rtf[j + 1])) {
+        let k = j + 1;
+        let word = '';
+        while (k < len && /[a-zA-Z]/.test(rtf[k])) word += rtf[k++];
+        if (RTF_DESTINATIONS.has(word)) isDestination = true;
+      }
+      if (isDestination && skipDepth === 0) skipDepth = depth;
+      i++;
+      continue;
+    }
+
+    if (ch === '}') {
+      if (skipDepth > 0 && depth === skipDepth) skipDepth = 0;
+      depth--;
+      i++;
+      continue;
+    }
+
+    if (ch === '\\') {
+      const next = rtf[i + 1];
+      if (next === '\\' || next === '{' || next === '}') {
+        if (skipDepth === 0) out += next;
+        i += 2;
+        continue;
+      }
+      if (next === '\n' || next === '\r') {
+        if (skipDepth === 0) out += '\n';
+        i += 2;
+        continue;
+      }
+      if (next === "'") {
+        const hex = rtf.slice(i + 2, i + 4);
+        if (skipDepth === 0 && /^[0-9a-fA-F]{2}$/.test(hex)) {
+          out += String.fromCharCode(parseInt(hex, 16));
+        }
+        i += 4;
+        continue;
+      }
+      if (/[a-zA-Z]/.test(next)) {
+        let k = i + 1;
+        let word = '';
+        while (k < len && /[a-zA-Z]/.test(rtf[k])) word += rtf[k++];
+        let param = '';
+        if (rtf[k] === '-' || /\d/.test(rtf[k])) {
+          while (k < len && (rtf[k] === '-' || /\d/.test(rtf[k]))) param += rtf[k++];
+        }
+        if (rtf[k] === ' ') k++;
+
+        if (skipDepth === 0) {
+          if (word === 'u' && param) {
+            let code = parseInt(param, 10);
+            if (code < 0) code += 65536;
+            if (!isNaN(code)) out += String.fromCharCode(code);
+            if (rtf[k] === '?') k++;
+            else if (rtf[k] === '\\' && rtf[k + 1] === "'") k += 4;
+            else if (k < len && rtf[k] !== '\\' && rtf[k] !== '{' && rtf[k] !== '}') k++;
+          } else if (word in RTF_SYMBOLS) {
+            out += RTF_SYMBOLS[word];
+          }
+        }
+        i = k;
+        continue;
+      }
+      i += 2;
+      continue;
+    }
+
+    if (ch === '\n' || ch === '\r') {
+      i++;
+      continue;
+    }
+
+    if (skipDepth === 0) out += ch;
+    i++;
+  }
+
+  return out
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -45,6 +225,11 @@ const LABEL_COLORS_NAMED = {
 };
 
 const LABEL_COLORS = Object.values(LABEL_COLORS_NAMED);
+
+function decodeUnicodeEscapes(s) {
+  if (typeof s !== 'string') return s;
+  return s.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+}
 
 function buildRtf(plainText, platform = 'mac') {
   const escaped = plainText
@@ -101,10 +286,33 @@ export class ScrivenerProject {
     this._load();
   }
 
+  _assertWritable() {
+    const lockPath = join(this.scrivPath, 'Files', 'user.lock');
+    if (existsSync(lockPath)) {
+      const msg = `scrivener-mcp: refusing write — ${lockPath} is present (Scrivener has this project open)`;
+      console.error(msg);
+      throw new Error(
+        'Scrivener has this project open (Files/user.lock exists). ' +
+        'Close the project in Scrivener and retry. ' +
+        "If you're sure no Scrivener instance is running, delete Files/user.lock manually."
+      );
+    }
+  }
+
   _save() {
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
       new XMLBuilder(BUILDER_OPTIONS).build(this._doc);
-    writeFileSync(this.scrivxPath, xml, 'utf8');
+    const xmlBuf = Buffer.from(xml, 'utf8');
+    writeFileSync(this.scrivxPath, xmlBuf);
+    this._writeBinderAutosave(xmlBuf);
+  }
+
+  _writeBinderAutosave(xmlBuf) {
+    const filesDir = join(this.scrivPath, 'Files');
+    if (!existsSync(filesDir)) mkdirSync(filesDir, { recursive: true });
+    const autosavePath = join(filesDir, 'binder.autosave');
+    const innerName = basename(this.scrivxPath);
+    writeFileSync(autosavePath, zipSingleFile(innerName, xmlBuf));
   }
 
   _getBinderItems() {
@@ -177,6 +385,18 @@ export class ScrivenerProject {
   }
 
   writeContent(uuid, plainText) {
+    this._assertWritable();
+    this.reload();
+    if (!this.findItem(uuid)) {
+      throw new Error(
+        `Cannot write content: UUID ${uuid} is not in the binder. ` +
+        'Use add_document to create a new document and obtain a valid UUID.'
+      );
+    }
+    this._writeContentRaw(uuid, decodeUnicodeEscapes(plainText));
+  }
+
+  _writeContentRaw(uuid, plainText) {
     const dir = join(this.scrivPath, 'Files', 'Data', uuid);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'content.rtf'), buildRtf(plainText, this.platform), 'utf8');
@@ -238,22 +458,61 @@ export class ScrivenerProject {
     this._updateSearchIndex(uuid, title, text);
   }
 
-  updateMetadata(uuid, changes) {
-    const item = this.findItem(uuid);
-    if (!item) throw new Error(`Item not found: ${uuid}`);
+  // Returns true if the .scrivx XML was modified. Synopsis-only changes
+  // persist to disk via writeSynopsis and don't dirty the binder XML.
+  _applyMetadataChanges(item, changes) {
     if (!item.MetaData) item.MetaData = {};
-
-    if ('synopsis' in changes) this.writeSynopsis(uuid, changes.synopsis, item.Title ?? '');
-
     let xmlDirty = false;
-    if ('title' in changes) { item.Title = changes.title; xmlDirty = true; }
-    if ('labelId' in changes) { item.MetaData.LabelID = String(changes.labelId); xmlDirty = true; }
-    if ('statusId' in changes) { item.MetaData.StatusID = String(changes.statusId); xmlDirty = true; }
+    if ('title' in changes) {
+      item.Title = decodeUnicodeEscapes(changes.title);
+      xmlDirty = true;
+    }
+    if ('synopsis' in changes) {
+      this.writeSynopsis(
+        item['@_UUID'] ?? '',
+        decodeUnicodeEscapes(changes.synopsis),
+        item.Title ?? ''
+      );
+    }
+    if ('labelId' in changes) {
+      item.MetaData.LabelID = String(changes.labelId);
+      xmlDirty = true;
+    }
+    if ('statusId' in changes) {
+      item.MetaData.StatusID = String(changes.statusId);
+      xmlDirty = true;
+    }
     if ('includeInCompile' in changes) {
       item.MetaData.IncludeInCompile = changes.includeInCompile ? 'Yes' : 'No';
       xmlDirty = true;
     }
+    return xmlDirty;
+  }
+
+  updateMetadata(uuid, changes) {
+    this._assertWritable();
+    this.reload();
+    const item = this.findItem(uuid);
+    if (!item) throw new Error(`Item not found: ${uuid}`);
+    const xmlDirty = this._applyMetadataChanges(item, changes);
     if (xmlDirty) this._save();
+  }
+
+  batchUpdateMetadata(updates) {
+    this._assertWritable();
+    this.reload();
+    const errors = [];
+    let anyXmlDirty = false;
+    for (const { uuid, changes } of updates) {
+      const item = this.findItem(uuid);
+      if (!item) {
+        errors.push({ uuid, error: 'not found' });
+        continue;
+      }
+      if (this._applyMetadataChanges(item, changes)) anyXmlDirty = true;
+    }
+    if (anyXmlDirty) this._save();
+    return { applied: updates.length - errors.length, errors };
   }
 
   // ── Binder mutation ─────────────────────────────────────────────────────────
@@ -291,6 +550,8 @@ export class ScrivenerProject {
   }
 
   addItem(parentUuid, itemDef) {
+    this._assertWritable();
+    this.reload();
     const labels = this.getLabels();
     const statuses = this.getStatuses();
     const labelId = itemDef.label
@@ -303,11 +564,12 @@ export class ScrivenerProject {
     const uuid = randomUUID().toUpperCase();
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
+    const type = itemDef.type ?? 'Text';
     const node = {
       '@_UUID': uuid,
       '@_ID': this._getNextId(),
-      '@_Type': itemDef.type ?? 'Text',
-      Title: itemDef.title ?? 'Untitled',
+      '@_Type': type,
+      Title: decodeUnicodeEscapes(itemDef.title ?? 'Untitled'),
     };
 
     const meta = {
@@ -319,12 +581,24 @@ export class ScrivenerProject {
     if (statusId !== undefined) meta.StatusID = statusId;
     node.MetaData = meta;
 
-    // Write supporting files BEFORE saving the binder XML. This ensures all
-    // data files are in place when Scrivener's FSEvents watcher fires on the
-    // .scrivx write, preventing a race where Scrivener saves without the new
-    // entry and leaves an orphaned Files/Data directory.
-    if (itemDef.synopsis) this.writeSynopsis(uuid, itemDef.synopsis, itemDef.title ?? 'Untitled');
-    if (itemDef.content) this.writeContent(uuid, itemDef.content);
+    // Write supporting files BEFORE saving the binder XML. Two reasons:
+    //   - FSEvents safety: if Scrivener is watching, supporting files are
+    //     in place by the time the .scrivx write fires the watcher.
+    //   - Synopsis-only Text items: writing an empty content.rtf gives
+    //     Scrivener something concrete to bind to, preventing recovery
+    //     passes from garbage-collecting metadata-only documents.
+    // Use _writeContentRaw (not writeContent) to skip the reload that
+    // would clobber our in-memory binder before we push the new node.
+    if (itemDef.synopsis) {
+      this.writeSynopsis(
+        uuid,
+        decodeUnicodeEscapes(itemDef.synopsis),
+        decodeUnicodeEscapes(itemDef.title ?? 'Untitled')
+      );
+    }
+    if (type === 'Text') {
+      this._writeContentRaw(uuid, decodeUnicodeEscapes(itemDef.content ?? ''));
+    }
 
     this._targetChildren(parentUuid).push(node);
     this._save();
@@ -333,6 +607,8 @@ export class ScrivenerProject {
   }
 
   moveItem(uuid, newParentUuid) {
+    this._assertWritable();
+    this.reload();
     const found = this._findWithParent(this._getBinderItems(), uuid);
     if (!found) throw new Error(`Item not found: ${uuid}`);
     found.siblings.splice(found.index, 1);
@@ -342,26 +618,56 @@ export class ScrivenerProject {
 
   // ── Outline ──────────────────────────────────────────────────────────────────
 
-  _outlineItem(item, labels, statuses) {
+  _outlineItem(item, labels, statuses, includeContent) {
     const meta = item.MetaData ?? {};
+    const uuid = item['@_UUID'] ?? '';
+    const type = item['@_Type'] ?? '';
     const node = {
-      uuid: item['@_UUID'] ?? '',
-      type: item['@_Type'] ?? '',
+      uuid,
+      type,
       title: item.Title ?? '',
       synopsis: this.readSynopsis(item['@_UUID'] ?? ''),
       label: labels[String(meta.LabelID ?? '')] ?? '',
       status: statuses[String(meta.StatusID ?? '')] ?? '',
       includeInCompile: meta.IncludeInCompile ?? '',
     };
+    if (includeContent && type === 'Text' && uuid) {
+      const text = this.readContent(uuid);
+      if (text) node.content = text;
+    }
     const children = item.Children?.BinderItem ?? [];
-    if (children.length) node.children = children.map((c) => this._outlineItem(c, labels, statuses));
+    if (children.length) {
+      node.children = children.map((c) => this._outlineItem(c, labels, statuses, includeContent));
+    }
     return node;
   }
 
-  getOutline() {
+  getOutline({ rootUuid = null, includeContent = false } = {}) {
     const labels = this.getLabels();
     const statuses = this.getStatuses();
-    return this._getBinderItems().map((item) => this._outlineItem(item, labels, statuses));
+    if (rootUuid) {
+      const item = this.findItem(rootUuid);
+      if (!item) throw new Error(`Item not found: ${rootUuid}`);
+      return [this._outlineItem(item, labels, statuses, includeContent)];
+    }
+    return this._getBinderItems().map((item) => this._outlineItem(item, labels, statuses, includeContent));
+  }
+
+  getDocuments(uuids) {
+    const labels = this.getLabels();
+    const statuses = this.getStatuses();
+    const flat = this.flattenBinder();
+    const byUuid = new Map(flat.map((i) => [i.uuid, i]));
+    return uuids.map((uuid) => {
+      const item = byUuid.get(uuid);
+      if (!item) return { uuid, error: 'not found' };
+      return {
+        ...item,
+        label: labels[item.labelId] ?? item.labelId,
+        status: statuses[item.statusId] ?? item.statusId,
+        content: item.type === 'Text' ? this.readContent(uuid) : '',
+      };
+    });
   }
 
   // ── Static factory ──────────────────────────────────────────────────────────
@@ -395,11 +701,12 @@ export class ScrivenerProject {
 
     function buildItem(item) {
       const uuid = randomUUID().toUpperCase();
+      const type = item.type ?? 'Text';
       const node = {
         '@_UUID': uuid,
         '@_ID': String(nextId++),
-        '@_Type': item.type ?? 'Text',
-        Title: item.title ?? 'Untitled',
+        '@_Type': type,
+        Title: decodeUnicodeEscapes(item.title ?? 'Untitled'),
       };
 
       const meta = {
@@ -414,7 +721,19 @@ export class ScrivenerProject {
       const children = item.children ?? [];
       if (children.length > 0) node.Children = { BinderItem: children.map(buildItem) };
 
-      if (item.content || item.synopsis) pendingContent.push({ uuid, title: item.title ?? 'Untitled', content: item.content, synopsis: item.synopsis });
+      // Always queue Text items so an empty content.rtf gets written for
+      // synopsis-only items (otherwise Scrivener's recovery pass garbage-
+      // collects them). Queue any item with a synopsis so writeSynopsis
+      // populates synopsis.txt + search.indexes.
+      if (type === 'Text' || item.synopsis) {
+        pendingContent.push({
+          uuid,
+          type,
+          title: decodeUnicodeEscapes(item.title ?? 'Untitled'),
+          content: decodeUnicodeEscapes(item.content ?? ''),
+          synopsis: item.synopsis ? decodeUnicodeEscapes(item.synopsis) : undefined,
+        });
+      }
 
       return node;
     }
@@ -477,11 +796,14 @@ export class ScrivenerProject {
 
     const xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
       new XMLBuilder(BUILDER_OPTIONS).build(doc);
-    writeFileSync(join(scrivPath, `${safeName}.scrivx`), xml, 'utf8');
+    const xmlBuf = Buffer.from(xml, 'utf8');
+    const scrivxName = `${safeName}.scrivx`;
+    writeFileSync(join(scrivPath, scrivxName), xmlBuf);
+    writeFileSync(join(scrivPath, 'Files', 'binder.autosave'), zipSingleFile(scrivxName, xmlBuf));
 
     const project = new ScrivenerProject(scrivPath, { platform });
-    for (const { uuid, title, content, synopsis } of pendingContent) {
-      if (content) project.writeContent(uuid, content);
+    for (const { uuid, type, title, content, synopsis } of pendingContent) {
+      if (type === 'Text') project._writeContentRaw(uuid, content);
       if (synopsis) project.writeSynopsis(uuid, synopsis, title);
     }
     return project;
