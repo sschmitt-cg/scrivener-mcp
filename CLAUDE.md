@@ -23,7 +23,7 @@ constraints, and current work status.
 
 ### Before writing any code
 For any **significant design or architectural decision** (new component structure,
-state shape change, audio API design, iOS navigation pattern, etc.), propose
+state shape change, API design, navigation pattern, data model, etc.), propose
 **3 distinct options with tradeoffs** and wait for a choice before writing code.
 For small, unambiguous tasks this step can be skipped.
 
@@ -65,9 +65,14 @@ the wrong thing.
 
 ### Pull requests
 - Open PRs with `gh pr create` targeting `main`.
-- PR description must include: what changed, why, and how to test it.
+- PR description must include: what changed, why, and a test plan (see format below).
 - Link any related GitHub issue in the body so it closes on merge.
 - Do not create a PR for exploratory or review-only work.
+
+**Test plan format** — three explicit sections:
+- **CI (automatic):** tests that run on every push (type check, lint, unit tests via GitHub Actions)
+- **Automated:** commands a reviewer can run locally to verify (e.g., `npm test -- --testPathPattern=foo`)
+- **Manual:** steps requiring human interaction (e.g., launch the app, tap X, confirm Y)
 
 ### Validation before every commit
 Run all three gates and confirm zero errors:

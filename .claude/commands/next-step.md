@@ -18,25 +18,19 @@ that is the task. Skip to Step 3.
 
 ## Step 2 — Identify the task
 
-If no task was agreed in conversation, determine the best next step by checking
-these sources in priority order:
+Check these sources in priority order, **stopping as soon as one yields a clear task**:
 
-1. **Open PRs** — run `gh pr list --state open` and review. If any PR exists
-   with unresolved CI failures, that takes priority over all new work. Resume
-   from Step 8 (CI monitoring) with that PR rather than starting something new.
-2. **Open GitHub issues** — run `gh issue list --state open` and review. A
-   bug report or explicitly filed issue takes priority over backlog items.
-3. **`BACKLOG.md`** — scan for unchecked items across all phases. Prefer items
-   that are near the top of their phase (higher priority / lower dependency) or
-   that unblock other items.
-4. **Generate options** — if no issue or backlog item stands out as clearly
-   next, generate exactly **3 options**. Each option should be a mix of:
+1. **Open PRs** — run `gh pr list --state open`. If any PR has unresolved CI
+   failures, resume from Step 8 with that PR. Stop here.
+2. **Open GitHub issues** — run `gh issue list --state open`. If any exist,
+   the highest-priority issue is the task. Stop here.
+3. **`BACKLOG.md`** — only if no open issues. Prefer items near the top of
+   their phase or that unblock others. If a clear prioritized item exists,
+   use it. Stop here.
+4. **Generate options** — only if no open issues and no clear backlog item.
+   Read `docs/project-vision.md` now, then generate exactly **3 options**:
    - An unstarted or deprioritized BACKLOG item worth revisiting `[BACKLOG]`
-   - An innovation you are proposing based on the project's vision `[NEW IDEA]`
-
-Before proposing, read **`docs/project-vision.md`** and **`docs/architecture.md`**
-to ensure the chosen task (or generated options) aligns with the project's
-audiences, platform goals, design principles, and technical constraints.
+   - An innovation based on the project's vision `[NEW IDEA]`
 
 ---
 
@@ -84,15 +78,16 @@ Once the user confirms and the branch is resolved, spawn a focused implementatio
 sub-agent with this context:
 - The agreed task description
 - The branch name to work on
-- Relevant files and components to read first
-- Any specific constraints or file paths particularly relevant to this task
+- Relevant files the agent cannot reasonably discover on its own (non-obvious entry points, key type definitions, config files with non-standard locations)
+- Any constraints specific to this task not already covered by CLAUDE.md
+
+Do not include full conversation history in the handoff prompt.
 
 The implementation agent should:
 1. Read `docs/architecture.md` and `docs/project-vision.md` fully before writing
    any code (`CLAUDE.md` is loaded automatically as project instructions)
-2. Run `npx tsc --noEmit`, `npm run lint`, and `npm test` before making changes
-   to establish a clean baseline, then again after all changes are complete
-3. Make small, focused commits (`feat:` / `fix:` / `refactor:` prefix)
+2. Run all validation gates (per CLAUDE.md) before changes to establish a clean baseline, and again after all changes are complete
+3. Follow commit conventions from CLAUDE.md
 4. Update `BACKLOG.md` to check off any completed items and add new items that
    emerged from the work; update `docs/project-vision.md` or `docs/architecture.md`
    if new design principles, platform constraints, or architectural decisions were
@@ -131,19 +126,15 @@ summary of what is unresolved.
 
 ## Step 7 — Open the PR
 
-Once the review sub-agent gives a clean pass (no findings), open a PR:
+Once the review sub-agent gives a clean pass, open a PR:
 
 ```
 gh pr create --base main
 ```
 
-PR description must include:
-- What changed and why
-- How to test it
-- Link to any related GitHub issue in the body so it closes on merge
+Follow CLAUDE.md PR requirements for the description, including the three-section test plan format.
 
-Report the PR URL to the user and proceed to Step 8 automatically (no pause
-needed — CI monitoring is low cost and expected).
+Report the PR URL to the user and proceed to Step 8 automatically (no pause needed — CI monitoring is low cost and expected).
 
 ---
 
@@ -161,7 +152,7 @@ apply these rules:
 - CI failure whose root cause is unclear or requires a design decision
 - Any situation where you are not confident what the correct fix is
 
-After each autonomous fix: commit, push, and wait for CI to re-run.
+After each autonomous fix: record the failure and fix in one line, commit, push, and wait for CI to re-run. Carry only the summary forward — drop raw CI log output.
 
 **After 5 rounds**, regardless of status, stop and report to the user:
 - What was resolved
@@ -172,12 +163,11 @@ After each autonomous fix: commit, push, and wait for CI to re-run.
 
 ## Notes
 
-- Token budget: each sub-agent starts with a fresh context window. Keep handoff
-  prompts focused — include only what is needed, not the full conversation.
+- Token budget: each sub-agent starts with a fresh context window and has no memory of prior sub-agent runs.
 - The `.claude/` directory is version-controlled in this repo (except
   `settings.json` and `settings.local.json`, which are gitignored). Changes to
   commands should be committed on a feature branch like any other code change.
 - Shell commands: use one Bash call per action — no `||`, `&&`, or `|` chains
   in diagnostic or discovery commands. Each command runs individually so
   auto-approval can work. This applies to validation gates too: run
-  `npx tsc --noEmit`, `npm run lint`, and `npm test` as separate calls.
+  `npm run typecheck`, `npm run lint`, and `npm test` as separate calls.
