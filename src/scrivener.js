@@ -286,6 +286,10 @@ export class ScrivenerProject {
     this._load();
   }
 
+  // Every public mutating method calls _assertWritable() then reload() before
+  // touching any state. _assertWritable() catches a live Scrivener session early.
+  // reload() ensures we write on top of the latest on-disk binder, so edits made
+  // directly in Scrivener between MCP calls are never silently overwritten.
   _assertWritable() {
     const lockPath = join(this.scrivPath, 'Files', 'user.lock');
     if (existsSync(lockPath)) {
