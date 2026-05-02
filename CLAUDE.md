@@ -12,7 +12,7 @@ constraints, and current work status.
 
 | File | What it contains |
 |---|---|
-| `docs/product-vision.md` | Product goals, target audiences, and design principles |
+| `docs/project-vision.md` | Product goals, target audiences, and design principles |
 | `docs/architecture.md` | Tech stack, architectural constraints, and key file map |
 | `BACKLOG.md` | Phased feature backlog and current development status |
 | `.claude/commands/next-step.md` | Orchestration logic for the `/next-step` slash command |
