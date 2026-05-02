@@ -247,9 +247,9 @@ describe('getOutline() — rootUuid + includeContent variants', () => {
     assert.equal(scene11.content, undefined, 'content must be absent when truncated');
   });
 
-  it('non-truncated result has no truncated flag', () => {
+  it('non-truncated result has truncated set to false', () => {
     const result = project.getOutline({ includeContent: true });
-    assert.equal(result.truncated, undefined);
+    assert.equal(result.truncated, false);
   });
 });
 
@@ -647,14 +647,13 @@ describe('stripRtf — real-world Scrivener 3 RTF constructs', () => {
     project = createTestProject('MCP Coverage — RTF Fixture');
     const items = project.flattenBinder();
     uuid = items.find((i) => i.type === 'Text').uuid;
+    // Write the fixture directly to bypass writeContent (which would re-encode it).
+    const fixturePath = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'scrivener-native.rtf');
+    const dir = join(project.scrivPath, 'Files', 'Data', uuid);
+    writeFileSync(join(dir, 'content.rtf'), readFileSync(fixturePath, 'utf8'), 'utf8');
   });
 
   it('strips all named destinations and decodes escapes from a Scrivener 3 RTF document', () => {
-    const fixturePath = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'scrivener-native.rtf');
-    // Write the fixture directly to bypass writeContent (which would re-encode it).
-    const dir = join(project.scrivPath, 'Files', 'Data', uuid);
-    writeFileSync(join(dir, 'content.rtf'), readFileSync(fixturePath, 'utf8'), 'utf8');
-
     const text = project.readContent(uuid);
 
     assert.ok(text.includes('First paragraph with bold and italic text.'),

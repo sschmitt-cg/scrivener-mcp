@@ -668,7 +668,7 @@ export class ScrivenerProject {
     } else {
       items = this._getBinderItems().map((i) => this._outlineItem(i, labels, statuses, includeContent, state));
     }
-    const result = { items };
+    const result = { items, truncated: false };
     if (state.truncated) {
       result.truncated = true;
       result.note = `Content truncated at ${maxContentChars} characters. Use rootUuid to scope to a subtree for a smaller result.`;
