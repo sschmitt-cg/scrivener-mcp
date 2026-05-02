@@ -340,6 +340,13 @@ describe('write safety — Files/user.lock + binder.autosave', () => {
     );
   });
 
+  it('writeContent throws for a UUID not in the binder', () => {
+    assert.throws(
+      () => project.writeContent('00000000-0000-0000-0000-000000000000', 'x'),
+      /not in the binder/i,
+    );
+  });
+
   it('Files/binder.autosave is created alongside .scrivx on save', () => {
     const autosavePath = join(project.scrivPath, 'Files', 'binder.autosave');
     assert.ok(existsSync(autosavePath), 'binder.autosave should exist');
