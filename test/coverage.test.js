@@ -597,6 +597,58 @@ describe('RTF / Unicode / XML escape round-trips', () => {
   });
 });
 
+// ── Real-world Scrivener 3 RTF regression fixture ─────────────────────────────
+//
+// test/fixtures/scrivener-native.rtf is a hand-crafted RTF file that exercises
+// constructs present in documents saved by Scrivener 3 but absent from the
+// synthetic RTF that buildRtf() produces:
+//
+//   - Multiple named destinations: fonttbl, colortbl, *\expandedcolortbl, *\generator
+//   - Bold/italic formatting groups stripped silently
+//   - Hex-encoded Latin-1 characters (\'e9, \'e8, \'ef)
+//   - Unicode escapes via \uc1\uNNNN? notation
+//   - Multiple \par-separated paragraphs
+//
+// The expected plain-text is derived from the RTF by manually tracing the
+// stripRtf state machine and is locked here as a regression guard against the
+// rewrite from PR #13.
+
+describe('stripRtf — real-world Scrivener 3 RTF constructs', () => {
+  let project;
+  let uuid;
+
+  before(() => {
+    project = createTestProject('MCP Coverage — RTF Fixture');
+    const items = project.flattenBinder();
+    uuid = items.find((i) => i.type === 'Text').uuid;
+  });
+
+  it('strips all named destinations and decodes escapes from a Scrivener 3 RTF document', () => {
+    const fixturePath = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'scrivener-native.rtf');
+    // Write the fixture directly to bypass writeContent (which would re-encode it).
+    const dir = join(project.scrivPath, 'Files', 'Data', uuid);
+    writeFileSync(join(dir, 'content.rtf'), readFileSync(fixturePath, 'utf8'), 'utf8');
+
+    const text = project.readContent(uuid);
+
+    assert.ok(text.includes('First paragraph with bold and italic text.'),
+      `expected formatted text; got: ${JSON.stringify(text)}`);
+    assert.ok(text.includes('Second paragraph: élève and naïveté.'),
+      `expected hex-decoded text; got: ${JSON.stringify(text)}`);
+    assert.ok(text.includes('Third paragraph: café and naïveté.'),
+      `expected unicode-decoded text; got: ${JSON.stringify(text)}`);
+    assert.ok(text.includes('Last paragraph.'),
+      `expected last paragraph; got: ${JSON.stringify(text)}`);
+  });
+
+  it('does not leak fonttbl, colortbl, generator, or expandedcolortbl destination text', () => {
+    const text = project.readContent(uuid);
+    assert.ok(!text.includes('Helvetica'), 'fonttbl content must be stripped');
+    assert.ok(!text.includes('TimesNewRoman'), 'fonttbl content must be stripped');
+    assert.ok(!text.includes('Scrivener 3.3'), 'generator content must be stripped');
+  });
+});
+
 // ── Windows-platform RTF output ───────────────────────────────────────────────
 
 describe('platform=windows RTF output', () => {
