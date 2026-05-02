@@ -255,6 +255,10 @@ Token-efficient context loading: pass includeContent=true to inline document tex
           type: 'boolean',
           description: 'If true, include the full plain-text content of every Text item in the tree (Folders never have content). Useful for loading prose context in a single call. Defaults to false.',
         },
+        maxContentChars: {
+          type: 'number',
+          description: 'Maximum total characters of prose to inline when includeContent is true. Items past the limit have no content field and the response includes a truncated flag and a note. Defaults to 200000. Use rootUuid to scope to a subtree if you need more.',
+        },
       },
     },
   },
@@ -467,9 +471,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'get_outline': {
         const project = requireProject();
-        const { rootUuid, includeContent } = args ?? {};
-        const outline = project.getOutline({ rootUuid, includeContent });
-        return { content: [{ type: 'text', text: JSON.stringify(outline, null, 2) }] };
+        const { rootUuid, includeContent, maxContentChars } = args ?? {};
+        const result = project.getOutline({ rootUuid, includeContent, maxContentChars });
+        const text = result.truncated
+          ? `Note: ${result.note}\n\n${JSON.stringify(result.items, null, 2)}`
+          : JSON.stringify(result.items, null, 2);
+        return { content: [{ type: 'text', text }] };
       }
 
       case 'get_documents': {

@@ -269,7 +269,7 @@ describe('Read tests', () => {
 
   describe('getOutline()', () => {
     let outline;
-    before(() => { outline = project.getOutline(); });
+    before(() => { outline = project.getOutline().items; });
 
     it('returns exactly 3 top-level nodes', () => {
       assert.equal(outline.length, 3);

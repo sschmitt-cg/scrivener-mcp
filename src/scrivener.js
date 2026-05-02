@@ -286,6 +286,10 @@ export class ScrivenerProject {
     this._load();
   }
 
+  // Every public mutating method calls _assertWritable() then reload() before
+  // touching any state. _assertWritable() catches a live Scrivener session early.
+  // reload() ensures we write on top of the latest on-disk binder, so edits made
+  // directly in Scrivener between MCP calls are never silently overwritten.
   _assertWritable() {
     const lockPath = join(this.scrivPath, 'Files', 'user.lock');
     if (existsSync(lockPath)) {
@@ -618,7 +622,7 @@ export class ScrivenerProject {
 
   // ── Outline ──────────────────────────────────────────────────────────────────
 
-  _outlineItem(item, labels, statuses, includeContent) {
+  _outlineItem(item, labels, statuses, includeContent, state) {
     const meta = item.MetaData ?? {};
     const uuid = item['@_UUID'] ?? '';
     const type = item['@_Type'] ?? '';
@@ -631,26 +635,45 @@ export class ScrivenerProject {
       status: statuses[String(meta.StatusID ?? '')] ?? '',
       includeInCompile: meta.IncludeInCompile ?? '',
     };
-    if (includeContent && type === 'Text' && uuid) {
+    if (includeContent && type === 'Text' && uuid && !state.truncated) {
       const text = this.readContent(uuid);
-      if (text) node.content = text;
+      if (text) {
+        if (state.chars + text.length > state.maxChars) {
+          state.truncated = true;
+        } else {
+          node.content = text;
+          state.chars += text.length;
+        }
+      }
     }
     const children = item.Children?.BinderItem ?? [];
     if (children.length) {
-      node.children = children.map((c) => this._outlineItem(c, labels, statuses, includeContent));
+      node.children = children.map((c) => this._outlineItem(c, labels, statuses, includeContent, state));
     }
     return node;
   }
 
-  getOutline({ rootUuid = null, includeContent = false } = {}) {
+  // Returns { items, truncated?, note? }.
+  // When includeContent is true and total prose exceeds maxContentChars,
+  // items past the limit have no content field and truncated/note are set.
+  getOutline({ rootUuid = null, includeContent = false, maxContentChars = 200_000 } = {}) {
     const labels = this.getLabels();
     const statuses = this.getStatuses();
+    const state = { chars: 0, maxChars: maxContentChars, truncated: false };
+    let items;
     if (rootUuid) {
       const item = this.findItem(rootUuid);
       if (!item) throw new Error(`Item not found: ${rootUuid}`);
-      return [this._outlineItem(item, labels, statuses, includeContent)];
+      items = [this._outlineItem(item, labels, statuses, includeContent, state)];
+    } else {
+      items = this._getBinderItems().map((i) => this._outlineItem(i, labels, statuses, includeContent, state));
     }
-    return this._getBinderItems().map((item) => this._outlineItem(item, labels, statuses, includeContent));
+    const result = { items, truncated: false };
+    if (state.truncated) {
+      result.truncated = true;
+      result.note = `Content truncated at ${maxContentChars} characters. Use rootUuid to scope to a subtree for a smaller result.`;
+    }
+    return result;
   }
 
   getDocuments(uuids) {

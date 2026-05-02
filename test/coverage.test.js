@@ -18,7 +18,9 @@ import assert from 'node:assert/strict';
 import {
   readFileSync, writeFileSync, unlinkSync, existsSync, statSync, mkdirSync, rmSync,
 } from 'fs';
-import { join } from 'path';
+import { join, dirname, basename } from 'path';
+import { fileURLToPath } from 'url';
+import { inflateRawSync } from 'zlib';
 import { ScrivenerProject } from '../src/scrivener.js';
 import { SCRATCH_DIR, createTestProject, buildTitleMap, findOutlineNode } from './helpers.js';
 import { LABEL_IDS, STATUS_IDS } from './fixtures.js';
@@ -175,14 +177,14 @@ describe('getOutline() — rootUuid + includeContent variants', () => {
   });
 
   it('rootUuid scopes the outline to a single subtree', () => {
-    const outline = project.getOutline({ rootUuid: uuids['Chapter 1 — The World Begins'] });
+    const { items: outline } = project.getOutline({ rootUuid: uuids['Chapter 1 — The World Begins'] });
     assert.equal(outline.length, 1);
     assert.equal(outline[0].title, 'Chapter 1 — The World Begins');
     assert.equal(outline[0].children.length, 3);
   });
 
   it('rootUuid pointed at a leaf returns a single childless node', () => {
-    const outline = project.getOutline({ rootUuid: uuids['Scene 1.1 — Opening Image'] });
+    const { items: outline } = project.getOutline({ rootUuid: uuids['Scene 1.1 — Opening Image'] });
     assert.equal(outline.length, 1);
     assert.equal(outline[0].title, 'Scene 1.1 — Opening Image');
     assert.equal(outline[0].children, undefined);
@@ -196,7 +198,7 @@ describe('getOutline() — rootUuid + includeContent variants', () => {
   });
 
   it('includeContent=true inlines content for Text items only', () => {
-    const outline = project.getOutline({ includeContent: true });
+    const { items: outline } = project.getOutline({ includeContent: true });
     const scene11 = findOutlineNode(outline, 'Scene 1.1 — Opening Image');
     assert.equal(scene11.content, 'The sun rose over the hills.');
 
@@ -209,7 +211,7 @@ describe('getOutline() — rootUuid + includeContent variants', () => {
   });
 
   it('includeContent=true omits content for empty Text items', () => {
-    const outline = project.getOutline({ includeContent: true });
+    const { items: outline } = project.getOutline({ includeContent: true });
     // Scene 2.2 was created with no content; readContent() returns '' which
     // the outline builder skips entirely.
     const scene22 = findOutlineNode(outline, 'Scene 2.2 — First Meeting');
@@ -217,18 +219,37 @@ describe('getOutline() — rootUuid + includeContent variants', () => {
   });
 
   it('includeContent=false (default) never includes content', () => {
-    const outline = project.getOutline();
+    const { items: outline } = project.getOutline();
     const scene11 = findOutlineNode(outline, 'Scene 1.1 — Opening Image');
     assert.equal(scene11.content, undefined);
   });
 
   it('rootUuid + includeContent compose correctly', () => {
-    const outline = project.getOutline({
+    const { items: outline } = project.getOutline({
       rootUuid: uuids['Chapter 1 — The World Begins'],
       includeContent: true,
     });
     const scene11 = findOutlineNode(outline, 'Scene 1.1 — Opening Image');
     assert.equal(scene11.content, 'The sun rose over the hills.');
+  });
+
+  it('getOutline always returns an object with an items array', () => {
+    const result = project.getOutline();
+    assert.ok(Array.isArray(result.items), 'items must be an array');
+    assert.equal(result.items.length, 3, 'top-level items: Manuscript, Research, Trash');
+  });
+
+  it('maxContentChars=0 truncates all non-empty content', () => {
+    const result = project.getOutline({ includeContent: true, maxContentChars: 0 });
+    assert.ok(result.truncated, 'should be marked truncated');
+    assert.ok(result.note && result.note.length > 0, 'truncated result should include a note');
+    const scene11 = findOutlineNode(result.items, 'Scene 1.1 — Opening Image');
+    assert.equal(scene11.content, undefined, 'content must be absent when truncated');
+  });
+
+  it('non-truncated result has truncated set to false', () => {
+    const result = project.getOutline({ includeContent: true });
+    assert.equal(result.truncated, false);
   });
 });
 
@@ -319,6 +340,13 @@ describe('write safety — Files/user.lock + binder.autosave', () => {
     );
   });
 
+  it('writeContent throws for a UUID not in the binder', () => {
+    assert.throws(
+      () => project.writeContent('00000000-0000-0000-0000-000000000000', 'x'),
+      /not in the binder/i,
+    );
+  });
+
   it('Files/binder.autosave is created alongside .scrivx on save', () => {
     const autosavePath = join(project.scrivPath, 'Files', 'binder.autosave');
     assert.ok(existsSync(autosavePath), 'binder.autosave should exist');
@@ -351,6 +379,25 @@ describe('write safety — Files/user.lock + binder.autosave', () => {
       stat.mtimeMs > mtimeBefore || stat.size !== sizeBefore,
       'binder.autosave should be rewritten on save',
     );
+  });
+
+  it('binder.autosave stored entry filename matches the .scrivx filename', () => {
+    const buf = readFileSync(join(project.scrivPath, 'Files', 'binder.autosave'));
+    const nameLen = buf.readUInt16LE(26);
+    const storedName = buf.subarray(30, 30 + nameLen).toString('utf8');
+    assert.equal(storedName, basename(project.scrivxPath));
+  });
+
+  it('binder.autosave decompresses to the exact .scrivx content (round-trip)', () => {
+    const buf = readFileSync(join(project.scrivPath, 'Files', 'binder.autosave'));
+    // Parse the ZIP local file header to locate the compressed payload.
+    // Header layout: 30 fixed bytes, then filename (len at offset 26), then extra field (len at offset 28).
+    const nameLen = buf.readUInt16LE(26);
+    const extraLen = buf.readUInt16LE(28);
+    const compSize = buf.readUInt32LE(18);
+    const dataStart = 30 + nameLen + extraLen;
+    const decompressed = inflateRawSync(buf.subarray(dataStart, dataStart + compSize));
+    assert.deepEqual(decompressed, readFileSync(project.scrivxPath));
   });
 });
 
@@ -573,6 +620,57 @@ describe('RTF / Unicode / XML escape round-trips', () => {
     const scrivxFile = readFileSync(project.scrivxPath, 'utf8');
     assert.ok(scrivxFile.includes('Tom &amp; Jerry &amp; Co.'),
       'ampersand in title must be entity-encoded in .scrivx');
+  });
+});
+
+// ── Real-world Scrivener 3 RTF regression fixture ─────────────────────────────
+//
+// test/fixtures/scrivener-native.rtf is a hand-crafted RTF file that exercises
+// constructs present in documents saved by Scrivener 3 but absent from the
+// synthetic RTF that buildRtf() produces:
+//
+//   - Multiple named destinations: fonttbl, colortbl, *\expandedcolortbl, *\generator
+//   - Bold/italic formatting groups stripped silently
+//   - Hex-encoded Latin-1 characters (\'e9, \'e8, \'ef)
+//   - Unicode escapes via \uc1\uNNNN? notation
+//   - Multiple \par-separated paragraphs
+//
+// The expected plain-text is derived from the RTF by manually tracing the
+// stripRtf state machine and is locked here as a regression guard against the
+// rewrite from PR #13.
+
+describe('stripRtf — real-world Scrivener 3 RTF constructs', () => {
+  let project;
+  let uuid;
+
+  before(() => {
+    project = createTestProject('MCP Coverage — RTF Fixture');
+    const items = project.flattenBinder();
+    uuid = items.find((i) => i.type === 'Text').uuid;
+    // Write the fixture directly to bypass writeContent (which would re-encode it).
+    const fixturePath = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'scrivener-native.rtf');
+    const dir = join(project.scrivPath, 'Files', 'Data', uuid);
+    writeFileSync(join(dir, 'content.rtf'), readFileSync(fixturePath, 'utf8'), 'utf8');
+  });
+
+  it('strips all named destinations and decodes escapes from a Scrivener 3 RTF document', () => {
+    const text = project.readContent(uuid);
+
+    assert.ok(text.includes('First paragraph with bold and italic text.'),
+      `expected formatted text; got: ${JSON.stringify(text)}`);
+    assert.ok(text.includes('Second paragraph: élève and naïveté.'),
+      `expected hex-decoded text; got: ${JSON.stringify(text)}`);
+    assert.ok(text.includes('Third paragraph: café and naïveté.'),
+      `expected unicode-decoded text; got: ${JSON.stringify(text)}`);
+    assert.ok(text.includes('Last paragraph.'),
+      `expected last paragraph; got: ${JSON.stringify(text)}`);
+  });
+
+  it('does not leak fonttbl, colortbl, generator, or expandedcolortbl destination text', () => {
+    const text = project.readContent(uuid);
+    assert.ok(!text.includes('Helvetica'), 'fonttbl content must be stripped');
+    assert.ok(!text.includes('TimesNewRoman'), 'fonttbl content must be stripped');
+    assert.ok(!text.includes('Scrivener 3.3'), 'generator content must be stripped');
   });
 });
 

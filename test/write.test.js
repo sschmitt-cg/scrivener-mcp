@@ -185,7 +185,7 @@ describe('Write tests', () => {
     });
 
     it('new scene appears under Chapter 4 in the outline', () => {
-      const outline = project.getOutline();
+      const { items: outline } = project.getOutline();
       const ch4 = findOutlineNode(outline, 'Chapter 4 — Midpoint');
       assert.equal(ch4.children.length, 2, 'Chapter 4 should now have 2 children');
       assert.equal(ch4.children[1].title, 'Scene 4.2 — The Twist');
@@ -208,7 +208,7 @@ describe('Write tests', () => {
         type:     'Folder',
         synopsis: 'The final confrontation.',
       });
-      const outline = project.getOutline();
+      const { items: outline } = project.getOutline();
       const actII = findOutlineNode(outline, 'Act II — Confrontation');
       assert.equal(actII.children.length, 3, 'Act II should now have 3 chapters');
       assert.equal(actII.children[2].title, 'Chapter 5 — Resolution');
@@ -219,7 +219,7 @@ describe('Write tests', () => {
         title:    'Epilogue',
         synopsis: 'What happened after.',
       });
-      const outline = project.getOutline();
+      const { items: outline } = project.getOutline();
       const manuscript = outline[0];
       assert.ok(
         manuscript.children.some((c) => c.title === 'Epilogue'),
@@ -243,7 +243,7 @@ describe('Write tests', () => {
       const targetUuid = uuids['Chapter 2 — Inciting Incident'];
       project.moveItem(sceneUuid, targetUuid);
 
-      const outline = project.getOutline();
+      const { items: outline } = project.getOutline();
       const ch2 = findOutlineNode(outline, 'Chapter 2 — Inciting Incident');
       const ch1 = findOutlineNode(outline, 'Chapter 1 — The World Begins');
 
@@ -264,13 +264,13 @@ describe('Write tests', () => {
     });
 
     it('Chapter 1 now has 2 children after the move', () => {
-      const outline = project.getOutline();
+      const { items: outline } = project.getOutline();
       const ch1 = findOutlineNode(outline, 'Chapter 1 — The World Begins');
       assert.equal(ch1.children.length, 2);
     });
 
     it('Chapter 2 now has 3 children after the move', () => {
-      const outline = project.getOutline();
+      const { items: outline } = project.getOutline();
       const ch2 = findOutlineNode(outline, 'Chapter 2 — Inciting Incident');
       assert.equal(ch2.children.length, 3);
     });
@@ -279,7 +279,7 @@ describe('Write tests', () => {
       const sceneUuid = uuids['Scene 2.1 — The Letter Arrives'];
       project.moveItem(sceneUuid, null);
 
-      const outline = project.getOutline();
+      const { items: outline } = project.getOutline();
       const manuscript = outline[0];
       assert.ok(
         manuscript.children.some((c) => c.title === 'Scene 2.1 — The Letter Arrives'),
