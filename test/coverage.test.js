@@ -177,14 +177,14 @@ describe('getOutline() — rootUuid + includeContent variants', () => {
   });
 
   it('rootUuid scopes the outline to a single subtree', () => {
-    const outline = project.getOutline({ rootUuid: uuids['Chapter 1 — The World Begins'] });
+    const { items: outline } = project.getOutline({ rootUuid: uuids['Chapter 1 — The World Begins'] });
     assert.equal(outline.length, 1);
     assert.equal(outline[0].title, 'Chapter 1 — The World Begins');
     assert.equal(outline[0].children.length, 3);
   });
 
   it('rootUuid pointed at a leaf returns a single childless node', () => {
-    const outline = project.getOutline({ rootUuid: uuids['Scene 1.1 — Opening Image'] });
+    const { items: outline } = project.getOutline({ rootUuid: uuids['Scene 1.1 — Opening Image'] });
     assert.equal(outline.length, 1);
     assert.equal(outline[0].title, 'Scene 1.1 — Opening Image');
     assert.equal(outline[0].children, undefined);
@@ -198,7 +198,7 @@ describe('getOutline() — rootUuid + includeContent variants', () => {
   });
 
   it('includeContent=true inlines content for Text items only', () => {
-    const outline = project.getOutline({ includeContent: true });
+    const { items: outline } = project.getOutline({ includeContent: true });
     const scene11 = findOutlineNode(outline, 'Scene 1.1 — Opening Image');
     assert.equal(scene11.content, 'The sun rose over the hills.');
 
@@ -211,7 +211,7 @@ describe('getOutline() — rootUuid + includeContent variants', () => {
   });
 
   it('includeContent=true omits content for empty Text items', () => {
-    const outline = project.getOutline({ includeContent: true });
+    const { items: outline } = project.getOutline({ includeContent: true });
     // Scene 2.2 was created with no content; readContent() returns '' which
     // the outline builder skips entirely.
     const scene22 = findOutlineNode(outline, 'Scene 2.2 — First Meeting');
@@ -219,18 +219,37 @@ describe('getOutline() — rootUuid + includeContent variants', () => {
   });
 
   it('includeContent=false (default) never includes content', () => {
-    const outline = project.getOutline();
+    const { items: outline } = project.getOutline();
     const scene11 = findOutlineNode(outline, 'Scene 1.1 — Opening Image');
     assert.equal(scene11.content, undefined);
   });
 
   it('rootUuid + includeContent compose correctly', () => {
-    const outline = project.getOutline({
+    const { items: outline } = project.getOutline({
       rootUuid: uuids['Chapter 1 — The World Begins'],
       includeContent: true,
     });
     const scene11 = findOutlineNode(outline, 'Scene 1.1 — Opening Image');
     assert.equal(scene11.content, 'The sun rose over the hills.');
+  });
+
+  it('getOutline always returns an object with an items array', () => {
+    const result = project.getOutline();
+    assert.ok(Array.isArray(result.items), 'items must be an array');
+    assert.equal(result.items.length, 3, 'top-level items: Manuscript, Research, Trash');
+  });
+
+  it('maxContentChars=0 truncates all non-empty content', () => {
+    const result = project.getOutline({ includeContent: true, maxContentChars: 0 });
+    assert.ok(result.truncated, 'should be marked truncated');
+    assert.ok(result.note && result.note.length > 0, 'truncated result should include a note');
+    const scene11 = findOutlineNode(result.items, 'Scene 1.1 — Opening Image');
+    assert.equal(scene11.content, undefined, 'content must be absent when truncated');
+  });
+
+  it('non-truncated result has no truncated flag', () => {
+    const result = project.getOutline({ includeContent: true });
+    assert.equal(result.truncated, undefined);
   });
 });
 
